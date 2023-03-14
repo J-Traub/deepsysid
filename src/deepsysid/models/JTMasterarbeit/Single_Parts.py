@@ -207,12 +207,14 @@ class DiskretizedLinear(nn.Module):
         #add the correction calculated by the RNN to the state
         # can be seen as additional input with Ad matrix as input Matrix
         states_corr = states #+ residual_errors
-        #the states dont need to be shifted since they are going to be used only in the linearized system
+        #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
+        delta_states_corr = states_corr - self.ssv_states
         #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
         #for compatability with torch batches we transpose the equation
-        states_next = torch.mm(states_corr, self.Ad.transpose(0,1)) + torch.mm(delta_in, self.Bd.transpose(0,1)) 
+        delta_states_next = torch.mm(delta_states_corr, self.Ad.transpose(0,1)) + torch.mm(delta_in, self.Bd.transpose(0,1)) 
         #shift the linearized output back to the output
         y_linear = states + self.ssv_states
+        states_next = delta_states_next + self.ssv_states
         return y_linear, states_next
     
 
@@ -239,7 +241,7 @@ class LinearAndInputFNNConfig(DynamicIdentificationModelConfig):
 #TODO: should i normalize the input? does that make sense?
 #TODO: make the input net configureable
 #Does only simulate the InputFNN output since that is what is trained
-class LinearAndInputFNN(base.DynamicIdentificationModel):
+class LinearAndInputFNN(base.NormalizedControlStateModel):
     CONFIG = LinearAndInputFNNConfig
 
     def __init__(self, config: LinearAndInputFNNConfig):
@@ -305,20 +307,27 @@ class LinearAndInputFNN(base.DynamicIdentificationModel):
         self._inputnet.train()
         epoch_losses = []
 
-        dataset = TimeSeriesDataset(control_seqs, state_seqs)
+        self._control_mean, self._control_std = utils.mean_stddev(control_seqs)
+        self._state_mean, self._state_std = utils.mean_stddev(state_seqs)
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        us = utils.normalize(control_seqs, self._control_mean, self._control_std)
+        ys = utils.normalize(state_seqs, self._state_mean, self._state_std)
+
+        dataset = TimeSeriesDataset(us, ys)
         for i in range(self.epochs):
 
             data_loader = data.DataLoader(
                 dataset, self.batch_size, shuffle=True, drop_last=False,
             )
             total_loss = 0.0
-            backward_times = []
-            run_times = []
-            linear_times =[]
+            # backward_times = []
+            # run_times = []
+            # linear_times =[]
             # times = []
-            time1 = time.time()
+            # time1 = time.time()
             for batch_idx, batch in enumerate(data_loader):
-                time0 = time.time()
+                # time0 = time.time()
                 self._inputnet.zero_grad()
                 # testing = batch['FNN_input'].detach().cpu().numpy()
                 # input = batch['FNN_input'].float().to(self.device)  
@@ -326,6 +335,7 @@ class LinearAndInputFNN(base.DynamicIdentificationModel):
                 # true_next_states = batch['next_state'].float().to(self.device) 
                 FNN_input = batch['FNN_input'].reshape(-1,batch['FNN_input'].shape[-1])
                 Lin_input = batch['Lin_input'].reshape(-1,batch['Lin_input'].shape[-1])
+                Lin_input = utils.denormalize(Lin_input, self._state_mean, self._state_std)
                 next_state = batch['next_state'].reshape(-1,batch['next_state'].shape[-1])
                 # testing1 = batch['next_state'].detach().cpu().numpy()
                 # testing = next_state.detach().cpu().numpy()
@@ -333,9 +343,10 @@ class LinearAndInputFNN(base.DynamicIdentificationModel):
                 true_states = Lin_input.float().to(self.device) 
                 true_next_states = next_state.float().to(self.device) 
                 input_forces = self._inputnet.forward(input)
-                lin = time.time()
+                # lin = time.time()
                 state_pred, states_next = self._diskretized_linear.forward(input_forces,true_states)
-                ear = time.time()
+                states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
+                # ear = time.time()
 
                 batch_loss = F.mse_loss(
                     states_next, true_next_states
@@ -347,50 +358,102 @@ class LinearAndInputFNN(base.DynamicIdentificationModel):
                 self.optimizer.step()
                 
 
-                backward_times.append(ward -back)
+                # backward_times.append(ward -back)
                 
-                linear_times.append(ear-lin)
+                # linear_times.append(ear-lin)
                 # times.append(time2-time1)
                 # print(batch_idx)
-                timeend = time.time()
-                run_times.append(timeend - time0)
+                # timeend = time.time()
+                # run_times.append(timeend - time0)
 
 
-            time2 = time.time()
+            # time2 = time.time()
 
 
             logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch Loss: {total_loss}')
             print(f'Epoch {i + 1}/{self.epochs} - Epoch Loss: {total_loss}')
-            print(
-                f'backward time {np.mean(backward_times)} - run time {np.mean(run_times)}' 
-                f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
-                f'\n dataloader time {time2-time1-np.sum(run_times)}'
-                )
+            # print(
+            #     f'backward time {np.mean(backward_times)} - run time {np.mean(run_times)}' 
+            #     f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
+            #     f'\n dataloader time {time2-time1-np.sum(run_times)}'
+            #     )
             epoch_losses.append([i, total_loss])
 
         return dict(epoch_loss=np.array(epoch_losses, dtype=np.float64))
 
     def simulate(
         self,
-        # initial_control: NDArray[np.float64],
-        # initial_state: NDArray[np.float64],
+        initial_control: NDArray[np.float64],
+        initial_state: NDArray[np.float64],
         control: NDArray[np.float64],
     ) -> NDArray[np.float64]:
-        
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be saved.')
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
         self._inputnet.eval()
-        with torch.no_grad():
-            input_lin = self._inputnet.forward(control)
+        self._diskretized_linear.eval()
+        control_ = utils.normalize(control, self._control_mean, self._control_std)
+        init_cont = utils.normalize(initial_control, self._control_mean, self._control_std)
+        init_state = utils.normalize(initial_state, self._state_mean, self._state_std)
 
-        return input_lin.detach().cpu().numpy().astype(np.float64)
+        control_ = torch.from_numpy(control_).float().to(self.device)
+        init_cont = torch.from_numpy(init_cont).float().to(self.device)
+        init_state = torch.from_numpy(init_state).float().to(self.device)
+        with torch.no_grad():
+            last_init_cont = init_cont[-1,:].unsqueeze(0)
+            last_init_state = init_state[-1,:].unsqueeze(0)
+            #only need the last state/control since i am not utilizing a initializer
+            input_lin = self._inputnet.forward(last_init_cont)
+            last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
+            output, states_next = self._diskretized_linear.forward(input_forces=input_lin,states=last_init_state)
+            outputs =[]
+            outputs.append(output)
+            for contr in control_:
+                #unsqueeze for correct shape for the _diskretized_linear
+                input_lin = self._inputnet.forward(contr.unsqueeze(0))
+                output, states_next = self._diskretized_linear.forward(input_forces=input_lin,states=states_next)
+                outputs.append(output)
+
+        outputs = torch.vstack(outputs)
+        return outputs.detach().cpu().numpy().astype(np.float64)
 
     def save(self, file_path: Tuple[str, ...]) -> None:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be saved.')
         torch.save(self._inputnet.state_dict(), file_path[0])
+        with open(file_path[1], mode='w') as f:
+            json.dump(
+                {
+                    'state_mean': self._state_mean.tolist(),
+                    'state_std': self._state_std.tolist(),
+                    'control_mean': self._control_mean.tolist(),
+                    'control_std': self._control_std.tolist(),
+                },
+                f,
+            )
 
 
     def load(self, file_path: Tuple[str, ...]) -> None:
         self._inputnet.load_state_dict(
             torch.load(file_path[0], map_location=self.device_name)
         )
+        with open(file_path[1], mode='r') as f:
+            norm = json.load(f)
+        self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
+        self._state_std = np.array(norm['state_std'], dtype=np.float64)
+        self._control_mean = np.array(norm['control_mean'], dtype=np.float64)
+        self._control_std = np.array(norm['control_std'], dtype=np.float64)
 
     def get_file_extension(self) -> Tuple[str, ...]:
         return 'pth', 'json'
