@@ -137,46 +137,46 @@ class InputNet(nn.Module):
 class DiskretizedLinear(nn.Module):
     def __init__(
         self,
-        # Ad: NDArray[np.float64],
-        # Bd: NDArray[np.float64],
-        # Cd: NDArray[np.float64],
-        # Dd: NDArray[np.float64],
-        # ssv_input: NDArray[np.float64],
-        # ssv_states: NDArray[np.float64],
+        Ad: List[List[np.float64]],
+        Bd: List[List[np.float64]],
+        Cd: List[List[np.float64]],
+        Dd: List[List[np.float64]],
+        ssv_input: List[np.float64],
+        ssv_states: List[np.float64],
     ):
         super().__init__()
 
 
-        Ad = [
-        [0.95013655722506018541650973929791,                                     0,                                   0,                                   0,                                    0],
-        [                                 0,    0.97301200162687573325115408806596,  0.15010745470066019779942223522085, -0.31718659560396628149803177620925,   0.20920658092307373165930073355412],
-        [                                 0,   0.010989971476874587849592579402724,  0.49397156170454681323178647289751, -0.41836210372089926989858099659614,  -0.70866754485476979308344880337245],
-        [                                 0, -0.0057811139185215635466486006066589, 0.001755356723630133479116532946307,  0.79438406062355182424283839281998, 0.0016112562367335591176353837283841],
-        [                                 0,  0.0058028063111857305922391958574735,  0.80074622709314469126695712475339, -0.24235145964997839573840110460878,   0.60750434207042802725595720403362]
-        ],
-        Bd = [
-        [0.0000025440532028030539262993068444496,                                           0,                                           0,                                           0],
-        [                                      0,    0.00000043484020054323831296305647928224,  -0.000000058044367250997092370129508626456, -0.0000000029457123101043193733947037104334],
-        [                                      0, -0.0000000078192931709820619618461943968642,    0.00000019659355907511883409705707830006, -0.0000000031007639013231448259531736742246],
-        [                                      0,  0.0000000076881039158870533106903728684869, -0.0000000010864635093489020602185588640679,   0.000000011472201145655161557752056949566],
-        [                                      0, -0.0000000043908753737658910011124498422742,    0.00000010884895344888811376612590062218, -0.0000000010957350422826603352287007565489]
-        ],
-        Cd = [
-        [1.0,   0,   0,   0,   0],
-        [  0, 1.0,   0,   0,   0],
-        [  0,   0, 1.0,   0,   0],
-        [  0,   0,   0, 1.0,   0],
-        [  0,   0,   0,   0, 1.0]        
-        ],
-        Dd = [
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0]
-        ],
-        ssv_input = [49000.0, 0, 0, 0],
-        ssv_states = [5.0, 0, 0, 0, 0],
+        # Ad = [
+        # [0.95013655722506018541650973929791,                                     0,                                   0,                                   0,                                    0],
+        # [                                 0,    0.97301200162687573325115408806596,  0.15010745470066019779942223522085, -0.31718659560396628149803177620925,   0.20920658092307373165930073355412],
+        # [                                 0,   0.010989971476874587849592579402724,  0.49397156170454681323178647289751, -0.41836210372089926989858099659614,  -0.70866754485476979308344880337245],
+        # [                                 0, -0.0057811139185215635466486006066589, 0.001755356723630133479116532946307,  0.79438406062355182424283839281998, 0.0016112562367335591176353837283841],
+        # [                                 0,  0.0058028063111857305922391958574735,  0.80074622709314469126695712475339, -0.24235145964997839573840110460878,   0.60750434207042802725595720403362]
+        # ],
+        # Bd = [
+        # [0.0000025440532028030539262993068444496,                                           0,                                           0,                                           0],
+        # [                                      0,    0.00000043484020054323831296305647928224,  -0.000000058044367250997092370129508626456, -0.0000000029457123101043193733947037104334],
+        # [                                      0, -0.0000000078192931709820619618461943968642,    0.00000019659355907511883409705707830006, -0.0000000031007639013231448259531736742246],
+        # [                                      0,  0.0000000076881039158870533106903728684869, -0.0000000010864635093489020602185588640679,   0.000000011472201145655161557752056949566],
+        # [                                      0, -0.0000000043908753737658910011124498422742,    0.00000010884895344888811376612590062218, -0.0000000010957350422826603352287007565489]
+        # ],
+        # Cd = [
+        # [1.0,   0,   0,   0,   0],
+        # [  0, 1.0,   0,   0,   0],
+        # [  0,   0, 1.0,   0,   0],
+        # [  0,   0,   0, 1.0,   0],
+        # [  0,   0,   0,   0, 1.0]        
+        # ],
+        # Dd = [
+        # [0, 0, 0, 0],
+        # [0, 0, 0, 0],
+        # [0, 0, 0, 0],
+        # [0, 0, 0, 0],
+        # [0, 0, 0, 0]
+        # ],
+        # ssv_input = [49000.0, 0, 0, 0],
+        # ssv_states = [5.0, 0, 0, 0, 0],
 
         self.Ad = nn.Parameter(torch.tensor(Ad).squeeze().float())
         self.Ad.requires_grad = False
@@ -229,12 +229,12 @@ class LinearAndInputFNNConfig(DynamicIdentificationModelConfig):
     batch_size: int
     epochs: int
     loss: Literal['mse', 'msge']
-    # Ad: NDArray[np.float64]
-    # Bd: NDArray[np.float64]
-    # Cd: NDArray[np.float64]
-    # Dd: NDArray[np.float64]
-    # ssv_input: NDArray[np.float64]
-    # ssv_states: NDArray[np.float64]
+    Ad: List[List[np.float64]]
+    Bd: List[List[np.float64]]
+    Cd: List[List[np.float64]]
+    Dd: List[List[np.float64]]
+    ssv_input: List[np.float64]
+    ssv_states: List[np.float64]
 
 
 
@@ -262,12 +262,12 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
         self.epochs = config.epochs
 
 
-        # self.Ad = config.Ad
-        # self.Bd = config.Bd
-        # self.Cd = config.Cd
-        # self.Dd = config.Dd
-        # self.ssv_input = config.ssv_input
-        # self.ssv_states = config.ssv_states
+        self.Ad = config.Ad
+        self.Bd = config.Bd
+        self.Cd = config.Cd
+        self.Dd = config.Dd
+        self.ssv_input = config.ssv_input
+        self.ssv_states = config.ssv_states
 
 
         if config.loss == 'mse':
@@ -279,15 +279,15 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
         self._inputnet = InputNet(dropout = self.dropout).to(self.device)
 
-        self._diskretized_linear = DiskretizedLinear().to(self.device)   
-        # self._diskretized_linear = DiskretizedLinear(
-        #     Ad = self.Ad,
-        #     Bd = self.Bd,
-        #     Cd = self.Cd,
-        #     Dd = self.Dd,
-        #     ssv_input= self.ssv_input,
-        #     ssv_states= self.ssv_states,
-        # ).to(self.device)         
+        # self._diskretized_linear = DiskretizedLinear().to(self.device)   
+        self._diskretized_linear = DiskretizedLinear(
+            Ad = self.Ad,
+            Bd = self.Bd,
+            Cd = self.Cd,
+            Dd = self.Dd,
+            ssv_input= self.ssv_input,
+            ssv_states= self.ssv_states,
+        ).to(self.device)         
 
         self.optimizer = optim.Adam(
             self._inputnet.parameters(), lr=self.learning_rate
@@ -295,6 +295,18 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
 
     #TODO:make it recurrent (not just one step prediciton)
+    #u mse zu groß (schauen ob shift richtig)
+    #normlisierung in tesis aufschreiben
+    #nrmse als normalisierter rmse: bei config metrics hinzufügen
+    #learning rate verringern?
+    #ad .. als list in config
+    #verglich mit LSTM aufschreiben
+    #datenset mit kräften generieren mit matlab
+    #enable testing in vscode
+    #probably needs overfitting protection else it will just memorize the inputs
+    # => for the FNN regularization/overfitting protection will probably be the 
+    #    main thing since otherwise it will definitely not learn the correct inputs
+    #    but the perfect inputs for the trainingset 
     def train(
         self,
         control_seqs: List[NDArray[np.float64]],
@@ -321,18 +333,20 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 dataset, self.batch_size, shuffle=True, drop_last=False,
             )
             total_loss = 0.0
-            # backward_times = []
-            # run_times = []
-            # linear_times =[]
-            # times = []
-            # time1 = time.time()
+            max_batches = 0
+            backward_times = []
+            run_times = []
+            linear_times =[]
+            times = []
+            time1 = time.time()
             for batch_idx, batch in enumerate(data_loader):
-                # time0 = time.time()
+                time0 = time.time()
                 self._inputnet.zero_grad()
                 # testing = batch['FNN_input'].detach().cpu().numpy()
                 # input = batch['FNN_input'].float().to(self.device)  
                 # true_states = batch['Lin_input'].float().to(self.device) 
                 # true_next_states = batch['next_state'].float().to(self.device) 
+                #for some reason dataloader iteration is very slow otherwise
                 FNN_input = batch['FNN_input'].reshape(-1,batch['FNN_input'].shape[-1])
                 Lin_input = batch['Lin_input'].reshape(-1,batch['Lin_input'].shape[-1])
                 Lin_input = utils.denormalize(Lin_input, self._state_mean, self._state_std)
@@ -343,10 +357,10 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 true_states = Lin_input.float().to(self.device) 
                 true_next_states = next_state.float().to(self.device) 
                 input_forces = self._inputnet.forward(input)
-                # lin = time.time()
+                lin = time.time()
                 state_pred, states_next = self._diskretized_linear.forward(input_forces,true_states)
                 states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
-                # ear = time.time()
+                ear = time.time()
 
                 batch_loss = F.mse_loss(
                     states_next, true_next_states
@@ -356,27 +370,29 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 batch_loss.backward()
                 ward = time.time()
                 self.optimizer.step()
+                max_batches = batch_idx
                 
 
-                # backward_times.append(ward -back)
+                backward_times.append(ward -back)
                 
                 # linear_times.append(ear-lin)
                 # times.append(time2-time1)
                 # print(batch_idx)
-                # timeend = time.time()
-                # run_times.append(timeend - time0)
+                timeend = time.time()
+                run_times.append(timeend - time0)
+                # print(f'Batch {batch_idx + 1} - Batch Loss: {batch_loss}')
 
 
-            # time2 = time.time()
+            time2 = time.time()
 
-
-            logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch Loss: {total_loss}')
-            print(f'Epoch {i + 1}/{self.epochs} - Epoch Loss: {total_loss}')
-            # print(
-            #     f'backward time {np.mean(backward_times)} - run time {np.mean(run_times)}' 
-            #     f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
-            #     f'\n dataloader time {time2-time1-np.sum(run_times)}'
-            #     )
+            loss_average = total_loss/(max_batches+1)
+            logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
+            print(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
+            print(
+                f'backward time {np.mean(backward_times)} - run time {np.mean(run_times)}' 
+                f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
+                f'\n dataloader time {time2-time1-np.sum(run_times)}'
+                )
             epoch_losses.append([i, total_loss])
 
         return dict(epoch_loss=np.array(epoch_losses, dtype=np.float64))
