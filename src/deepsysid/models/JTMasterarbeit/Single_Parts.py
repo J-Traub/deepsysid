@@ -296,12 +296,9 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
     #TODO:make it recurrent (not just one step prediciton)
     #u mse zu groß (schauen ob shift richtig)
-    #normlisierung in tesis aufschreiben
-    #nrmse als normalisierter rmse: bei config metrics hinzufügen
+    #normlisierung reihenfolge etc. in tesis aufschreiben
     #learning rate verringern?
-    #ad .. als list in config
-    #verglich mit LSTM aufschreiben
-    #datenset mit kräften generieren mit matlab
+    #vergleich mit LSTM aufschreiben
     #enable testing in vscode
     #probably needs overfitting protection else it will just memorize the inputs
     # => for the FNN regularization/overfitting protection will probably be the 
