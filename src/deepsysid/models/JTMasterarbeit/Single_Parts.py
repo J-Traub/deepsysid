@@ -30,9 +30,9 @@ class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
         )
         self.subbatchsize = 50
         subbatchnum = int(self.control.shape[0]/self.subbatchsize)
-        self.control = np.resize(self.control,(subbatchnum,50,self.control.shape[1]))
-        self.next_state = np.resize(self.next_state,(subbatchnum,50,self.next_state.shape[1]))
-        self.state = np.resize(self.state,(subbatchnum,50,self.state.shape[1]))
+        self.control = np.resize(self.control,(subbatchnum,self.subbatchsize,self.control.shape[1]))
+        self.next_state = np.resize(self.next_state,(subbatchnum,self.subbatchsize,self.next_state.shape[1]))
+        self.state = np.resize(self.state,(subbatchnum,self.subbatchsize,self.state.shape[1]))
 
     def __len__(self):
         # compute the total number of samples by summing the lengths of all sequences
@@ -44,7 +44,7 @@ class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
         state = []
         for control_seq, state_seq in zip(control_seqs, state_seqs):
             # create a next state sequence by shifting state_seq
-            next_state_seq = np.roll(state_seq, -1)
+            next_state_seq = np.roll(state_seq, -1,0)
              #put each in one continuos list and drop the last element since it is nonsense now
             next_state.append(next_state_seq[:-1]) 
             control.append(control_seq[:-1])
@@ -332,6 +332,36 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             data_loader = data.DataLoader(
                 dataset, self.batch_size, shuffle=True, drop_last=False,
             )
+        # ########
+        # control = []
+        # next_state = []
+        # state = []
+        # for control_seq, state_seq in zip(us, ys):
+        #     # create a next state sequence by shifting state_seq
+        #     next_state_seq = np.roll(state_seq, -1, 0)
+        #      #put each in one continuos list and drop the last element since it is nonsense now
+        #     next_state.append(next_state_seq[:-1]) 
+        #     control.append(control_seq[:-1])
+        #     state.append(state_seq[:-1])
+            
+
+        # control = np.vstack(control)
+        # next_state = np.vstack(next_state)
+        # state = np.vstack(state)
+
+        # minbatchsize = 50
+        # batchnum = int(control.shape[0]/(self.batch_size*minbatchsize))
+        # control = np.resize(control,(batchnum,self.batch_size*minbatchsize,control.shape[1]))
+        # next_state = np.resize(next_state,(batchnum,self.batch_size*minbatchsize,next_state.shape[1]))
+        # state = np.resize(state,(batchnum,self.batch_size*minbatchsize,state.shape[1]))
+
+        # control = torch.from_numpy(control)
+        # next_state = torch.from_numpy(next_state)
+        # state = torch.from_numpy(state)
+        
+        # for i in range(self.epochs):
+        # ###############
+
             total_loss = 0.0
             max_batches = 0
             backward_times = []
@@ -339,23 +369,42 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             linear_times =[]
             times = []
             time1 = time.time()
+
             for batch_idx, batch in enumerate(data_loader):
+            # #########
+            # perm = torch.randperm(control.size()[0])
+            # control = control[perm]
+            # next_state = next_state[perm]
+            # state = state[perm]
+
+            # batch_idx = 0
+            # for batch_control, batch_next_state, batch_state in zip(control,next_state,state):
+            # ##########
                 time0 = time.time()
                 self._inputnet.zero_grad()
                 # testing = batch['FNN_input'].detach().cpu().numpy()
                 # input = batch['FNN_input'].float().to(self.device)  
                 # true_states = batch['Lin_input'].float().to(self.device) 
                 # true_next_states = batch['next_state'].float().to(self.device) 
-                #for some reason dataloader iteration is very slow otherwise
+
+                # for some reason dataloader iteration is very slow otherwise
                 FNN_input = batch['FNN_input'].reshape(-1,batch['FNN_input'].shape[-1])
                 Lin_input = batch['Lin_input'].reshape(-1,batch['Lin_input'].shape[-1])
                 Lin_input = utils.denormalize(Lin_input, self._state_mean, self._state_std)
                 next_state = batch['next_state'].reshape(-1,batch['next_state'].shape[-1])
+
                 # testing1 = batch['next_state'].detach().cpu().numpy()
                 # testing = next_state.detach().cpu().numpy()
+
                 input = FNN_input.float().to(self.device)  
                 true_states = Lin_input.float().to(self.device) 
                 true_next_states = next_state.float().to(self.device) 
+                # ###############
+                # input = batch_control.float().to(self.device)  
+                # batch_state = utils.denormalize(batch_state, self._state_mean, self._state_std)
+                # true_states = batch_state.float().to(self.device) 
+                # true_next_states = batch_next_state.float().to(self.device)
+                # # ###########
                 input_forces = self._inputnet.forward(input)
                 lin = time.time()
                 state_pred, states_next = self._diskretized_linear.forward(input_forces,true_states)
@@ -375,12 +424,16 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
                 backward_times.append(ward -back)
                 
-                # linear_times.append(ear-lin)
+                linear_times.append(ear-lin)
                 # times.append(time2-time1)
                 # print(batch_idx)
                 timeend = time.time()
                 run_times.append(timeend - time0)
                 # print(f'Batch {batch_idx + 1} - Batch Loss: {batch_loss}')
+
+                ########
+                # batch_idx+=1
+                ##########
 
 
             time2 = time.time()
@@ -388,12 +441,12 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             loss_average = total_loss/(max_batches+1)
             logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
             print(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
-            print(
-                f'backward time {np.mean(backward_times)} - run time {np.mean(run_times)}' 
-                f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
-                f'\n dataloader time {time2-time1-np.sum(run_times)}'
-                )
-            epoch_losses.append([i, total_loss])
+            # print(
+            #     f'backward time {np.mean(backward_times)} - run time mean {np.mean(run_times)}' 
+            #     f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
+            #     f'\n dataloader time {time2-time1-np.sum(run_times)} - run time sum {np.sum(run_times)}' 
+            #     )
+            epoch_losses.append([i, loss_average])
 
         return dict(epoch_loss=np.array(epoch_losses, dtype=np.float64))
 
