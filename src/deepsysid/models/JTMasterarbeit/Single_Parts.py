@@ -488,6 +488,38 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
         outputs = torch.vstack(outputs)
         return outputs.detach().cpu().numpy().astype(np.float64)
+    
+    def simulate_inputforces_onestep(
+        self,
+        controls: NDArray[np.float64],
+        states: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be saved.')   
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        self._inputnet.eval()
+        self._diskretized_linear.eval()
+        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+        states_ = utils.normalize(states, self._state_mean, self._state_std)
+
+        controls_ = torch.from_numpy(controls_).float().to(self.device)
+        states_ = torch.from_numpy(states_).float().to(self.device)
+
+        with torch.no_grad():
+            input_forces = self._inputnet.forward(controls_)
+            state_pred, states_next = self._diskretized_linear.forward(input_forces,states_)
+            states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
+
+        return (input_forces.detach().cpu().numpy().astype(np.float64),
+                 states_next.detach().cpu().numpy().astype(np.float64))
+
+
 
     def save(self, file_path: Tuple[str, ...]) -> None:
         if (
