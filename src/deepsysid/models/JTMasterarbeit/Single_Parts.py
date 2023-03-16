@@ -480,10 +480,10 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             output, states_next = self._diskretized_linear.forward(input_forces=input_lin,states=last_init_state)
             outputs =[]
             outputs.append(output)
-            for contr in control_:
+            input_lin = self._inputnet.forward(control_)
+            for in_lin in input_lin:
                 #unsqueeze for correct shape for the _diskretized_linear
-                input_lin = self._inputnet.forward(contr.unsqueeze(0))
-                output, states_next = self._diskretized_linear.forward(input_forces=input_lin,states=states_next)
+                output, states_next = self._diskretized_linear.forward(input_forces=in_lin.unsqueeze(0),states=states_next)
                 outputs.append(output)
 
         outputs = torch.vstack(outputs)
