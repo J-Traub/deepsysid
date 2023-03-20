@@ -451,6 +451,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
         state_seqs: List[NDArray[np.float64]],
         control_seqs_vali: List[NDArray[np.float64]],
         state_seqs_vali: List[NDArray[np.float64]],
+        patience: np.int64, #how many epochs to wait until early stopping triggers
     ) -> Dict[str, NDArray[np.float64]]:
 
         #not that it would make a difference since all parameters 
@@ -488,6 +489,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             linear_times =[]
             times = []
             time1 = time.time()
+            self._inputnet.train()
 
             for batch_idx, batch in enumerate(data_loader):
                 time0 = time.time()
@@ -549,6 +551,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             # => could use the actual trajectory metric stuff as validation loss if it doesnt take to long
             #TODO: to prevent overfitting on the validation dataset might need to consider splitting the data new each training
             with torch.no_grad():
+                self._inputnet.eval() #this is very important (i think to disable the dropout layers)
                 controls_vali = torch.from_numpy(dataset_vali.control)
                 states_vali = torch.from_numpy(dataset_vali.state)
                 true_next_states_vali = torch.from_numpy(dataset_vali.next_state)
@@ -558,14 +561,36 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 controls_vali = controls_vali.reshape(-1,controls_vali.shape[-1]).float().to(self.device)
                 states_vali = states_vali.reshape(-1,states_vali.shape[-1])
                 states_vali = utils.denormalize(states_vali, self._state_mean, self._state_std).float().to(self.device)
-                true_next_states_vali = true_next_states_vali.reshape(-1,true_next_states_vali.shape[-1])
-                true_next_states_vali = utils.denormalize(true_next_states_vali, self._state_mean, self._state_std).float().to(self.device)
+                true_next_states_vali = true_next_states_vali.reshape(-1,true_next_states_vali.shape[-1]).float().to(self.device)
 
                 input_forces_vali = self._inputnet.forward(controls_vali)
                 state_pred_vali, states_next_vali = self._diskretized_linear.forward(input_forces_vali,states_vali)
+                states_next_vali = utils.normalize(states_next_vali, _state_mean_torch, _state_std_torch)
                 validation_loss = F.mse_loss(
                     states_next_vali, true_next_states_vali
                 )
+
+                # validation_loss = torch.sqrt(validation_loss) #for debug check, should be the same as the nrmse at the end when test dataset is used
+                #sanity check => works
+                # #all inputs into simulate_inputforces_onestep have to be unnormalized
+                # controls_vali_ = controls_vali.detach().cpu()
+                # controls_vali_ = utils.denormalize(controls_vali_, self._control_mean, self._control_std)
+                # states_vali_ = states_vali.detach().cpu()
+                # input_forces_vali_ = input_forces_vali.detach().cpu()
+
+                # _,states_next_vali_,_ = self.simulate_inputforces_onestep(
+                #     controls = controls_vali_.numpy().astype(np.float64),
+                #     states = states_vali_.numpy().astype(np.float64),
+                #     forces = input_forces_vali_.numpy().astype(np.float64))
+                # states_next_vali_ = utils.normalize(states_next_vali_, self._state_mean, self._state_std)
+
+                # #do the nrmse as validation loss (all states are already normalised)
+                # nsquared_error = torch.square(torch.from_numpy(states_next_vali_).float().to(self.device) - true_next_states_vali)
+                # # nsquared_error = torch.square(states_next_vali - true_next_states_vali)
+                # nmse = torch.mean(nsquared_error, dim=0)
+                # nrmse = torch.sqrt(nmse)
+                # validation_loss__ = torch.sqrt(torch.mean(torch.square(nrmse)))#.item()
+                # validation_loss = validation_loss__
                 
                 # Check if the current validation loss is the best so far
                 if validation_loss < best_val_loss:
@@ -574,6 +599,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                     # Update the best validation loss
                     best_val_loss = validation_loss
                     best_epoch = i
+                
 
 
             loss_average = total_loss/(max_batches+1)
@@ -587,6 +613,10 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             epoch_losses.append([i, loss_average])
             validation_loss_ = validation_loss.item()
             validation_losses.append([i, validation_loss_])
+
+            if patience < (i-best_epoch):
+                print("early stopping")
+                break
 
         #load the best parameters with best validation loss (early stopping)
         self._inputnet.load_state_dict(torch.load('best_model_params.pth'))
