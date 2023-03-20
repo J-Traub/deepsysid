@@ -544,12 +544,6 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             # time2 = time.time()
 
             #check validation for overfitt prevention
-            #TODO: doesnt seem to work yet
-            #TODO: need to smooth loss somehow to get a good stop criterion
-            # => can also just save the best parameters on the validation set and use them at the end
-            # => or stop if the best parameters havent changed for a long time 
-            # => could use the actual trajectory metric stuff as validation loss if it doesnt take to long
-            #TODO: to prevent overfitting on the validation dataset might need to consider splitting the data new each training
             with torch.no_grad():
                 self._inputnet.eval() #this is very important (i think to disable the dropout layers)
                 controls_vali = torch.from_numpy(dataset_vali.control)
