@@ -295,9 +295,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
 
     #TODO:make it recurrent (not just one step prediciton)
-    #u mse zu groß (schauen ob shift richtig)
-    #normlisierung reihenfolge etc. in tesis aufschreiben
-    #learning rate verringern?
+    #u mse zu groß (schauen ob shift richtig) => jetzt alles richtig
     #vergleich mit LSTM aufschreiben
     #enable testing in vscode
     #probably needs overfitting protection else it will just memorize the inputs
@@ -433,7 +431,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 ##########
 
 
-            time2 = time.time()
+            # time2 = time.time()
 
             loss_average = total_loss/(max_batches+1)
             logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
@@ -446,6 +444,156 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             epoch_losses.append([i, loss_average])
 
         return dict(epoch_loss=np.array(epoch_losses, dtype=np.float64))
+    
+    def train_and_val(
+        self,
+        control_seqs: List[NDArray[np.float64]],
+        state_seqs: List[NDArray[np.float64]],
+        control_seqs_vali: List[NDArray[np.float64]],
+        state_seqs_vali: List[NDArray[np.float64]],
+    ) -> Dict[str, NDArray[np.float64]]:
+
+        #not that it would make a difference since all parameters 
+        # have requires_grad = False but just to be sure
+        self._diskretized_linear.eval()
+        self._inputnet.train()
+        epoch_losses = []
+
+        self._control_mean, self._control_std = utils.mean_stddev(control_seqs)
+        self._state_mean, self._state_std = utils.mean_stddev(state_seqs)
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        us = utils.normalize(control_seqs, self._control_mean, self._control_std)
+        ys = utils.normalize(state_seqs, self._state_mean, self._state_std)
+
+        #validation
+        us_vali = utils.normalize(control_seqs_vali, self._control_mean, self._control_std)
+        ys_vali = utils.normalize(state_seqs_vali, self._state_mean, self._state_std)
+        dataset_vali = TimeSeriesDataset(us_vali, ys_vali)
+        best_val_loss = torch.tensor(float('inf'))
+        best_epoch = 0
+        validation_losses = []
+
+        dataset = TimeSeriesDataset(us, ys)
+        for i in range(self.epochs):
+
+            data_loader = data.DataLoader(
+                dataset, self.batch_size, shuffle=True, drop_last=False,
+            )
+
+            total_loss = 0.0
+            max_batches = 0
+            backward_times = []
+            run_times = []
+            linear_times =[]
+            times = []
+            time1 = time.time()
+
+            for batch_idx, batch in enumerate(data_loader):
+                time0 = time.time()
+                self._inputnet.zero_grad()
+                # testing = batch['FNN_input'].detach().cpu().numpy()
+                # input = batch['FNN_input'].float().to(self.device)  
+                # true_states = batch['Lin_input'].float().to(self.device) 
+                # true_next_states = batch['next_state'].float().to(self.device) 
+
+                # for some reason dataloader iteration is very slow otherwise
+                FNN_input = batch['FNN_input'].reshape(-1,batch['FNN_input'].shape[-1])
+                Lin_input = batch['Lin_input'].reshape(-1,batch['Lin_input'].shape[-1])
+                Lin_input = utils.denormalize(Lin_input, self._state_mean, self._state_std)
+                next_state = batch['next_state'].reshape(-1,batch['next_state'].shape[-1])
+
+                # testing1 = batch['next_state'].detach().cpu().numpy()
+                # testing = next_state.detach().cpu().numpy()
+
+                input = FNN_input.float().to(self.device)  
+                true_states = Lin_input.float().to(self.device) 
+                true_next_states = next_state.float().to(self.device) 
+
+                input_forces = self._inputnet.forward(input)
+                lin = time.time()
+                state_pred, states_next = self._diskretized_linear.forward(input_forces,true_states)
+                states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
+                ear = time.time()
+
+                batch_loss = F.mse_loss(
+                    states_next, true_next_states
+                )
+                total_loss += batch_loss.item()
+                back = time.time()
+                batch_loss.backward()
+                ward = time.time()
+                self.optimizer.step()
+                max_batches = batch_idx
+                
+
+                backward_times.append(ward -back)
+                
+                linear_times.append(ear-lin)
+                # times.append(time2-time1)
+                # print(batch_idx)
+                timeend = time.time()
+                run_times.append(timeend - time0)
+                # print(f'Batch {batch_idx + 1} - Batch Loss: {batch_loss}')
+
+
+
+
+            # time2 = time.time()
+
+            #check validation for overfitt prevention
+            #TODO: need to smooth loss somehow to get a good stop criterion
+            # => can also just save the best parameters on the validation set and use them at the end
+            # => or stop if the best parameters havent changed for a long time 
+            # => could use the actual trajectory metric stuff as validation loss if it doesnt take to long
+            #TODO: to prevent overfitting on the validation dataset might need to consider splitting the data new each training
+            with torch.no_grad():
+                controls_vali = torch.from_numpy(dataset_vali.control)
+                states_vali = torch.from_numpy(dataset_vali.state)
+                true_next_states_vali = torch.from_numpy(dataset_vali.next_state)
+
+                # for some reason dataloader iteration is very slow otherwise
+                #to device needs to be after denormalize else it cant calculate with the numpy std and mean
+                controls_vali = controls_vali.reshape(-1,controls_vali.shape[-1]).float().to(self.device)
+                states_vali = states_vali.reshape(-1,states_vali.shape[-1])
+                states_vali = utils.denormalize(states_vali, self._state_mean, self._state_std).float().to(self.device)
+                true_next_states_vali = true_next_states_vali.reshape(-1,true_next_states_vali.shape[-1])
+                true_next_states_vali = utils.denormalize(true_next_states_vali, self._state_mean, self._state_std).float().to(self.device)
+
+                input_forces_vali = self._inputnet.forward(controls_vali)
+                state_pred_vali, states_next_vali = self._diskretized_linear.forward(input_forces_vali,states_vali)
+                validation_loss = F.mse_loss(
+                    states_next_vali, true_next_states_vali
+                )
+                
+                # Check if the current validation loss is the best so far
+                if validation_loss < best_val_loss:
+                    # If it is, save the model parameters
+                    torch.save(self._inputnet.state_dict(), 'best_model_params.pth')
+                    # Update the best validation loss
+                    best_val_loss = validation_loss
+                    best_epoch = i
+
+
+            loss_average = total_loss/(max_batches+1)
+            logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
+            print(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
+            # print(
+            #     f'backward time {np.mean(backward_times)} - run time mean {np.mean(run_times)}' 
+            #     f'\n linear_time {np.mean(linear_times)} - times {time2-time1}'
+            #     f'\n dataloader time {time2-time1-np.sum(run_times)} - run time sum {np.sum(run_times)}' 
+            #     )
+            epoch_losses.append([i, loss_average])
+            validation_loss_ = validation_loss.item()
+            validation_losses.append([i, validation_loss_])
+
+        #load the best parameters with best validation loss (early stopping)
+        self._inputnet.load_state_dict(torch.load('best_model_params.pth'))
+
+        return dict(epoch_loss=np.array(epoch_losses, dtype=np.float64), 
+                    validation_loss=np.array(validation_losses, dtype=np.float64), 
+                    estop_epoch = best_epoch, 
+                    best_val_loss = best_val_loss.item())
 
     def simulate(
         self,
