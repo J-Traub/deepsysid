@@ -542,6 +542,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             # time2 = time.time()
 
             #check validation for overfitt prevention
+            #TODO: doesnt seem to work yet
             #TODO: need to smooth loss somehow to get a good stop criterion
             # => can also just save the best parameters on the validation set and use them at the end
             # => or stop if the best parameters havent changed for a long time 
