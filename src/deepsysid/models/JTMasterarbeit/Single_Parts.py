@@ -133,7 +133,6 @@ class InputNet(nn.Module):
         x = self.fc5(x)
         return x
     
-#TODO: NDArrays do not work with pydantic i think
 class DiskretizedLinear(nn.Module):
     def __init__(
         self,
@@ -146,37 +145,6 @@ class DiskretizedLinear(nn.Module):
     ):
         super().__init__()
 
-
-        # Ad = [
-        # [0.95013655722506018541650973929791,                                     0,                                   0,                                   0,                                    0],
-        # [                                 0,    0.97301200162687573325115408806596,  0.15010745470066019779942223522085, -0.31718659560396628149803177620925,   0.20920658092307373165930073355412],
-        # [                                 0,   0.010989971476874587849592579402724,  0.49397156170454681323178647289751, -0.41836210372089926989858099659614,  -0.70866754485476979308344880337245],
-        # [                                 0, -0.0057811139185215635466486006066589, 0.001755356723630133479116532946307,  0.79438406062355182424283839281998, 0.0016112562367335591176353837283841],
-        # [                                 0,  0.0058028063111857305922391958574735,  0.80074622709314469126695712475339, -0.24235145964997839573840110460878,   0.60750434207042802725595720403362]
-        # ],
-        # Bd = [
-        # [0.0000025440532028030539262993068444496,                                           0,                                           0,                                           0],
-        # [                                      0,    0.00000043484020054323831296305647928224,  -0.000000058044367250997092370129508626456, -0.0000000029457123101043193733947037104334],
-        # [                                      0, -0.0000000078192931709820619618461943968642,    0.00000019659355907511883409705707830006, -0.0000000031007639013231448259531736742246],
-        # [                                      0,  0.0000000076881039158870533106903728684869, -0.0000000010864635093489020602185588640679,   0.000000011472201145655161557752056949566],
-        # [                                      0, -0.0000000043908753737658910011124498422742,    0.00000010884895344888811376612590062218, -0.0000000010957350422826603352287007565489]
-        # ],
-        # Cd = [
-        # [1.0,   0,   0,   0,   0],
-        # [  0, 1.0,   0,   0,   0],
-        # [  0,   0, 1.0,   0,   0],
-        # [  0,   0,   0, 1.0,   0],
-        # [  0,   0,   0,   0, 1.0]        
-        # ],
-        # Dd = [
-        # [0, 0, 0, 0],
-        # [0, 0, 0, 0],
-        # [0, 0, 0, 0],
-        # [0, 0, 0, 0],
-        # [0, 0, 0, 0]
-        # ],
-        # ssv_input = [49000.0, 0, 0, 0],
-        # ssv_states = [5.0, 0, 0, 0, 0],
 
         self.Ad = nn.Parameter(torch.tensor(Ad).squeeze().float())
         self.Ad.requires_grad = False
@@ -191,11 +159,10 @@ class DiskretizedLinear(nn.Module):
         self.ssv_states = nn.Parameter(torch.tensor(ssv_states).squeeze().float())
         self.ssv_states.requires_grad = False
 
-    #TODO: include residual error
     def forward(self, 
                 input_forces: torch.Tensor,
                 states: torch.Tensor ,
-                #residual_errors: torch.Tensor
+                residual_errors: torch.Tensor = 0
                 ) -> torch.Tensor:
         #calculates x_(k+1) = Ad*x_k + Bd*u_k + Ad*e_k
         #           with x_corr_k = x_k+e_k the residual error corrected state
@@ -206,7 +173,7 @@ class DiskretizedLinear(nn.Module):
         delta_in = input_forces - self.ssv_input
         #add the correction calculated by the RNN to the state
         # can be seen as additional input with Ad matrix as input Matrix
-        states_corr = states #+ residual_errors
+        states_corr = states + residual_errors
         #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
         delta_states_corr = states_corr - self.ssv_states
         #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
@@ -237,10 +204,6 @@ class LinearAndInputFNNConfig(DynamicIdentificationModelConfig):
     ssv_states: List[np.float64]
 
 
-
-#TODO: should i normalize the input? does that make sense?
-#TODO: make the input net configureable
-#Does only simulate the InputFNN output since that is what is trained
 class LinearAndInputFNN(base.NormalizedControlStateModel):
     CONFIG = LinearAndInputFNNConfig
 
@@ -293,15 +256,6 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             self._inputnet.parameters(), lr=self.learning_rate
         )
 
-
-    #TODO:make it recurrent (not just one step prediciton)
-    #u mse zu groß (schauen ob shift richtig) => jetzt alles richtig
-    #vergleich mit LSTM aufschreiben
-    #enable testing in vscode
-    #probably needs overfitting protection else it will just memorize the inputs
-    # => for the FNN regularization/overfitting protection will probably be the 
-    #    main thing since otherwise it will definitely not learn the correct inputs
-    #    but the perfect inputs for the trainingset 
     def train(
         self,
         control_seqs: List[NDArray[np.float64]],
