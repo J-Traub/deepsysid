@@ -59,50 +59,6 @@ class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
             'Lin_input': self.state[idx],
             }
 
-class FixedWindowDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
-    def __init__(
-        self,
-        window_size: int,
-        control_seqs: List[NDArray[np.float64]],
-        state_seqs: List[NDArray[np.float64]],
-    ) -> None:
-        self.window_size = window_size
-        self.window_input, self.state_true = self.__load_dataset(
-            control_seqs, state_seqs
-        )
-
-    def __load_dataset(
-        self,
-        control_seqs: List[NDArray[np.float64]],
-        state_seqs: List[NDArray[np.float64]],
-    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
-        window_input = []
-        state_true = []
-        for control, state in zip(control_seqs, state_seqs):
-            for time in range(
-                self.window_size, control.shape[0] - 1, int(self.window_size / 4) + 1
-            ):
-                window_input.append(
-                    np.concatenate(
-                        (
-                            control[
-                                time - self.window_size + 1 : time + 1, :
-                            ].flatten(),
-                            state[time - self.window_size : time, :].flatten(),
-                        )
-                    )
-                )
-                state_true.append(state[time + 1, :])
-
-        return np.vstack(window_input), np.vstack(state_true)
-
-    def __len__(self) -> int:
-        return self.window_input.shape[0]
-
-    def __getitem__(self, idx: int) -> Dict[str, NDArray[np.float64]]:
-        return dict(
-            window_input=self.window_input[idx], state_true=self.state_true[idx]
-        )
 
 class InputNet(nn.Module):
     def __init__(self, dropout: float):
@@ -429,6 +385,8 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
         best_epoch = 0
         validation_losses = []
 
+        predictor_dataset = RecurrentPredictorDataset(us, ys, 50)
+
         dataset = TimeSeriesDataset(us, ys)
         for i in range(self.epochs):
 
@@ -687,3 +645,238 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
     def get_parameter_count(self) -> int:
         return sum(p.numel() for p in self._inputnet.parameters() if p.requires_grad)
+
+
+
+
+
+class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
+    nx: int
+    # FF_dim: int
+    # num_FF_layers: int
+    dropout: float
+    # window_size: int
+    learning_rate: float
+    batch_size: int
+    loss: Literal['mse', 'msge']
+    Ad: List[List[np.float64]]
+    Bd: List[List[np.float64]]
+    Cd: List[List[np.float64]]
+    Dd: List[List[np.float64]]
+    ssv_input: List[np.float64]
+    ssv_states: List[np.float64]
+    recurrent_dim: int
+    gamma: float
+    beta: float
+    # initial_decay_parameter: float
+    # decay_rate: float
+    # epochs_with_const_decay: int
+    num_recurrent_layers_init: int
+    sequence_length: int
+    epochs_InputFNN: int
+    epochs_initializer: int
+    epochs_predictor: int
+    bias: bool
+    log_min_max_real_eigenvalues: Optional[bool] = False
+
+
+class HybridLinearConvRNN(base.NormalizedControlStateModel):
+    CONFIG = HybridLinearConvRNNConfig
+
+    def __init__(self, config: LinearAndInputFNNConfig):
+        super().__init__(config)
+
+        self.device_name = config.device_name
+        self.device = torch.device(self.device_name)
+
+        self.control_dim = len(config.control_names)
+        self.state_dim = len(config.state_names)
+
+        self.dropout = config.dropout
+
+        # self.window_size = config.window_size
+
+        self.learning_rate = config.learning_rate
+        self.batch_size = config.batch_size
+
+        self.Ad = config.Ad
+        self.Bd = config.Bd
+        self.Cd = config.Cd
+        self.Dd = config.Dd
+        self.ssv_input = config.ssv_input
+        self.ssv_states = config.ssv_states
+
+
+        self.nx = config.nx
+        self.recurrent_dim = config.recurrent_dim
+
+        self.initial_decay_parameter = config.initial_decay_parameter
+        self.decay_rate = config.decay_rate
+        self.epochs_with_const_decay = config.epochs_with_const_decay
+
+        self.num_recurrent_layers_init = config.num_recurrent_layers_init
+
+        self.sequence_length = config.sequence_length
+
+        self.epochs_initializer = config.epochs_initializer
+        self.epochs_predictor = config.epochs_predictor
+        self.epochs_InputFNN = config.epochs_InputFNN
+
+        self.log_min_max_real_eigenvalues = config.log_min_max_real_eigenvalues
+        self.gamma=config.gamma
+        self.beta=config.beta
+        self.bias=config.bias
+
+        if config.loss == 'mse':
+            self.loss: nn.Module = nn.MSELoss().to(self.device)
+        elif config.loss == 'msge':
+            self.loss = loss.MSGELoss().to(self.device)
+        else:
+            raise ValueError('loss can only be "mse" or "msge"')
+
+        self._predictor = rnn.LtiRnnConvConstr(
+            nx=self.nx,
+            nu=self.control_dim,
+            ny=self.state_dim,
+            nw=self.recurrent_dim,
+            gamma=self.gamma,
+            beta=self.beta,
+            bias=self.bias,
+        ).to(self.device)
+
+        self._initializer = rnn.BasicLSTM(
+            input_dim=self.control_dim + self.state_dim,
+            recurrent_dim=self.nx,
+            num_recurrent_layers=self.num_recurrent_layers_init,
+            output_dim=[self.state_dim],
+            dropout=self.dropout,
+        ).to(self.device)
+
+        self._inputnet = InputNet(dropout = self.dropout).to(self.device)
+
+        self._diskretized_linear = DiskretizedLinear(
+            Ad = self.Ad,
+            Bd = self.Bd,
+            Cd = self.Cd,
+            Dd = self.Dd,
+            ssv_input= self.ssv_input,
+            ssv_states= self.ssv_states,
+        ).to(self.device)         
+
+        self.optimizer_inputFNN = optim.Adam(
+            self._inputnet.parameters(), lr=self.learning_rate
+        )
+        self.optimizer_pred = optim.Adam(
+            self._predictor.parameters(), lr=self.learning_rate
+        )
+        self.optimizer_init = optim.Adam(
+            self._initializer.parameters(), lr=self.learning_rate
+        )
+
+    def train(
+        self,
+        control_seqs: List[NDArray[np.float64]],
+        state_seqs: List[NDArray[np.float64]],
+    ) -> Dict[str, NDArray[np.float64]]:
+
+        #not that it would make a difference since all parameters 
+        # have requires_grad = False but just to be sure
+        self._diskretized_linear.eval()
+        self._inputnet.train()
+        self._predictor.initialize_lmi()
+        self._predictor.to(self.device)
+        self._predictor.train()
+        self._initializer.train()
+        epoch_losses = []
+
+        self._control_mean, self._control_std = utils.mean_stddev(control_seqs)
+        self._state_mean, self._state_std = utils.mean_stddev(state_seqs)
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        us = utils.normalize(control_seqs, self._control_mean, self._control_std)
+        ys = utils.normalize(state_seqs, self._state_mean, self._state_std)
+
+        #enugh for single step prediction
+        Timeseries_dataset = TimeSeriesDataset(us, ys)
+
+        #Initializer training
+        #################################
+        initializer_dataset = RecurrentInitializerDataset(us, ys, self.sequence_length)
+        initializer_loss = []
+        time_start_init = time.time()
+        for i in range(self.epochs_initializer):
+            data_loader = data.DataLoader(
+                initializer_dataset, self.batch_size, shuffle=True, drop_last=True
+            )
+            total_loss = 0.0
+            for batch_idx, batch in enumerate(data_loader):
+                self._initializer.zero_grad()
+                y, _ = self._initializer.forward(batch['x'].float().to(self.device))
+                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+                total_loss += batch_loss.item()
+                batch_loss.backward()
+                self.optimizer_init.step()
+
+            logger.info(
+                f'Epoch {i + 1}/{self.epochs_initializer}\t'
+                f'Epoch Loss (Initializer): {total_loss}'
+            )
+            initializer_loss.append(total_loss)
+        time_end_init = time.time()
+        ###########################
+        #Predictor (ConvRNN) training
+        #################################
+        # for multistep prediction
+        predictor_dataset = RecurrentPredictorDataset(us, ys, self.sequence_length)
+
+        time_start_pred = time.time()
+        t = self.initial_decay_parameter
+        predictor_loss: List[np.float64] = []
+        min_eigenvalue: List[np.float64] = []
+        max_eigenvalue: List[np.float64] = []
+        barrier_value: List[np.float64] = []
+        gradient_norm: List[np.float64] = []
+        backtracking_iter: List[np.float64] = []
+        
+        for i in range(self.epochs_predictor):
+            data_loader = data.DataLoader(
+                predictor_dataset, self.batch_size, shuffle=True, drop_last=True
+            )
+            total_loss = 0
+            max_grad = 0
+            for batch_idx, batch in enumerate(data_loader):
+                self._predictor.zero_grad()
+                # Initialize predictor with state of initializer network
+                _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
+                # Predict and optimize
+                y, _ = self._predictor.forward(
+                    batch['x'].float().to(self.device), hx=hx
+                )
+
+                # y = y.to(self.device) #this should be unnecessary
+                barrier = self._predictor.get_barrier(t).to(self.device)
+                ################# is this correct? it doesnt seem like y would be the next state
+                ################# but rather just the current state
+                ################# might actually fit with the caclualtion order
+                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+                total_loss += batch_loss.item()
+                (batch_loss + barrier).backward()
+
+                # gradient infos
+                grads_norm = [
+                    torch.linalg.norm(p.grad)
+                    for p in filter(
+                        lambda p: p.grad is not None, self._predictor.parameters()
+                    )
+                ]
+                max_grad += max(grads_norm)
+
+                # save old parameter set
+                old_pars = [
+                    par.clone().detach() for par in self._predictor.parameters()
+                ]
+
+                self.optimizer_pred.step()
+                ########################### 
+                #Constraints Checking
+                #################################
