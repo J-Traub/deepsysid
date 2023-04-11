@@ -900,7 +900,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             nx=self.nx,
             #in dimesion is state+ output of inputnet dismesion
             #TODO: make it variable when making the inputnet variable
-            nu=self.state_dim+4,
+            nu=self.state_dim+4+self.state_dim,
             ny=self.state_dim,
             nw=self.recurrent_dim,
             gamma=self.gamma,
@@ -1064,10 +1064,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #TODO:  i think i have to do the training sequence by sequence
                 #       or does it work that i have the initial hiddenstate (hx) 
                 #       for every sequence and the sequence gets computed by the RNN?
-                #       in that case i still need to reformate and back the tensor for 
-                #       the linearised model since it only takes matrizes
-                #       or make it such that it can take multidimesional tensors and 
-                #       just iterates over higher dimensions 
+
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
 
@@ -1079,7 +1076,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     residual_errors= 0) #since onestep prediction, the input state has no error
                 #is just linear inputs shifted by one (except that it has one more state at the and and one less )
                 # so could be done computationaly more efficient
-                rnn_control_inputs = self._inputnet.forward(batch['control'].float().to(self.device))
+                #=> the rnn should also get the previous control inputs as input, no?
+                rnn_control_inputs = self._inputnet.forward(batch['control_prev'].float().to(self.device))
                 #TODO: rnn needs to have the lin_states and the controls as input
                 #TODO: the hidden state cannot, like in the linear case, be set to the true state
                 #      in every step, so best is to let it run on the sequence with it 
@@ -1099,13 +1097,15 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #            linearised system states have all actual system states we could replace the 
                 #            rnn with a FNN since it wouldnt need the hidden state)
                 #            => would also be if we can show that behaviour
-                rnn_input = torch.concat((rnn_control_inputs,lin_states),dim=2)
-                res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
+                rnn_input = torch.concat((linear_inputs,lin_states,states_prev_),dim=2)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input)#,hx=hx)
                 corr_states = lin_states+res_error.float().to(self.device)
                 barrier = self._predictor.get_barrier(t).to(self.device)
-                batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
+                #batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
+                batch_loss = F.mse_loss(corr_states,batch['states'].float().to(self.device))
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
+                # batch_loss.backward()
 
                 # init_error = 0
                 # last_init_cont = batch['x0_control'][:,-1,:]#.unsqueeze(0) unsure about unsqeeze
