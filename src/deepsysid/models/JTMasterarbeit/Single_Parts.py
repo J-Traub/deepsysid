@@ -2,7 +2,7 @@ import copy
 import json
 import logging
 import time
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -270,7 +270,7 @@ class DiskretizedLinear(nn.Module):
         delta_states_corr = states_corr - self.ssv_states
         #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
         #for compatability with torch batches we transpose the equation
-        delta_states_next = torch.mm(delta_states_corr, self.Ad.transpose(0,1)) + torch.mm(delta_in, self.Bd.transpose(0,1)) 
+        delta_states_next = torch.matmul(delta_states_corr, self.Ad.transpose(0,1)) + torch.matmul(delta_in, self.Bd.transpose(0,1)) 
         #shift the linearized states back to the states
         states_next = delta_states_next + self.ssv_states
         #dont calculate y here, rather outside since else the calculation order might be wierd
@@ -506,6 +506,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
 
         #not that it would make a difference since all parameters 
         # have requires_grad = False but just to be sure
+        # => might actually make a difference since .eval() is not same as no grad
         self._diskretized_linear.eval()
         self._inputnet.train()
         epoch_losses = []
@@ -524,8 +525,6 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
         best_val_loss = torch.tensor(float('inf'))
         best_epoch = 0
         validation_losses = []
-
-        predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, 50)
 
         dataset = TimeSeriesDataset(us, ys)
         for i in range(self.epochs):
@@ -571,13 +570,13 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
                 ear = time.time()
 
 
-                batch_loss__ = F.mse_loss(
-                    states_next, true_next_states
-                )
-
-                batch_loss___ = torch.mean(
-                    ((true_next_states - states_next) ** 2) * loss_weights
-                    )
+                #just for sanitiy check
+                # batch_loss__ = F.mse_loss(
+                #     states_next, true_next_states
+                # )
+                # batch_loss___ = torch.mean(
+                #     ((true_next_states - states_next) ** 2) * loss_weights
+                #     )
 
                 #loss calculation, when weights are all 1, they are equivalent    
                 if loss_weights is None:
@@ -830,9 +829,9 @@ class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
     recurrent_dim: int
     gamma: float
     beta: float
-    # initial_decay_parameter: float
-    # decay_rate: float
-    # epochs_with_const_decay: int
+    initial_decay_parameter: float
+    decay_rate: float
+    epochs_with_const_decay: int
     num_recurrent_layers_init: int
     sequence_length: int
     epochs_InputFNN: int
@@ -889,6 +888,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         self.beta=config.beta
         self.bias=config.bias
 
+        #TODO:msge should probably never be used
         if config.loss == 'mse':
             self.loss: nn.Module = nn.MSELoss().to(self.device)
         elif config.loss == 'msge':
@@ -898,8 +898,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         self._predictor = rnn.LtiRnnConvConstr(
             nx=self.nx,
-            nu=self.control_dim,
-            ny=self.state_dim+self.control_dim,
+            #in dimesion is state+ output of inputnet dismesion
+            #TODO: make it variable when making the inputnet variable
+            nu=self.state_dim+4,
+            ny=self.state_dim,
             nw=self.recurrent_dim,
             gamma=self.gamma,
             beta=self.beta,
@@ -943,6 +945,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         #not that it would make a difference since all parameters 
         # have requires_grad = False but just to be sure
+        # => might make a difference since .eval() is not the same as just no grad
         self._diskretized_linear.eval()
         self._inputnet.train()
         self._predictor.initialize_lmi()
@@ -979,6 +982,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
                 f'Epoch Loss (Initializer): {total_loss}'
             )
+            # print(
+            #     f'Epoch {i + 1}/{self.epochs_initializer}\t'
+            #     f'Epoch Loss (Initializer): {total_loss}'
+            # )
             initializer_loss.append(total_loss)
         time_end_init = time.time()
 
@@ -1018,12 +1025,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 )
                 total_loss += batch_loss.item()
                 batch_loss.backward()
-                self.optimizer.step()
+                self.optimizer_inputFNN.step()
                 max_batches = batch_idx
 
             loss_average = total_loss/(max_batches+1)
-            logger.info(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
-            print(f'Epoch {i + 1}/{self.epochs} - Epoch average Loss: {loss_average}')
+            logger.info(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
+            print(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             inputfnn_losses.append([i, loss_average])
     
         ###########################
@@ -1054,11 +1061,18 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             max_grad = 0
             for batch_idx, batch in enumerate(data_loader):
                 self._predictor.zero_grad()
+                #TODO:  i think i have to do the training sequence by sequence
+                #       or does it work that i have the initial hiddenstate (hx) 
+                #       for every sequence and the sequence gets computed by the RNN?
+                #       in that case i still need to reformate and back the tensor for 
+                #       the linearised model since it only takes matrizes
+                #       or make it such that it can take multidimesional tensors and 
+                #       just iterates over higher dimensions 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
 
                 linear_inputs = self._inputnet.forward(batch['control_prev'].float().to(self.device))
-                states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std)
+                states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std).float().to(self.device)
                 lin_states = self._diskretized_linear.forward(
                     input_forces= linear_inputs,
                     states=states_prev_,
@@ -1070,9 +1084,24 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #TODO: the hidden state cannot, like in the linear case, be set to the true state
                 #      in every step, so best is to let it run on the sequence with it 
                 #      keeping its hidden state during that sequence
+                #TODO: are we doing one step correction with this? => the rnn gets the predicted states 
+                #      of the linearised system as input so it should notice that its hidden state is 
+                #      irrelevant for as long as all states that are in the actual system are in the 
+                #      linearised model => NO!! the RNN doesnt know the last correct(ed) state,
+                #      and it should need that to be able to correct the linearised model but it can 
+                #      construct the last corrected state with its hidden state.
+                #      => also in that setup it could learn to always completely disregard the
+                #      last hidden state for the next hiddenstate (can always construct it from its
+                #      claculated correction and the linearised model output)
+                #      ===>>>
+                #      TODO: consider giving the RNN the corrected last state as input, that way it doesn't 
+                #            need to keep that information in its hidden state (and in the case that the
+                #            linearised system states have all actual system states we could replace the 
+                #            rnn with a FNN since it wouldnt need the hidden state)
+                #            => would also be if we can show that behaviour
                 rnn_input = torch.concat((rnn_control_inputs,lin_states),dim=2)
                 res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
-                corr_states = lin_states+res_error
+                corr_states = lin_states+res_error.float().to(self.device)
                 barrier = self._predictor.get_barrier(t).to(self.device)
                 batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
                 total_loss += batch_loss.item()
@@ -1187,6 +1216,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
+            print(
+                f'Epoch {i + 1}/{self.epochs_predictor}\t'
+                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Barrier: {barrier:1f}\t'
+                f'Backtracking Line Search iteration: {bls_iter}\t'
+                f'Max accumulated gradient norm: {max_grad:1f}'
+            )
             predictor_loss.append(np.float64(total_loss))
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
@@ -1218,3 +1254,56 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             training_time_predictor=np.asarray(time_total_pred),
             inputfnn_losses=np.asarray(inputfnn_losses),
         )
+    
+
+    def simulate(
+        self,
+        initial_control: NDArray[np.float64],
+        initial_state: NDArray[np.float64],
+        control: NDArray[np.float64],
+    ) -> Union[
+        NDArray[np.float64], Tuple[NDArray[np.float64], Dict[str, NDArray[np.float64]]]
+    ]:
+        pass
+
+    def save(self, file_path: Tuple[str, ...]) -> None:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be saved.')
+        torch.save(self._inputnet.state_dict(), file_path[0])
+        with open(file_path[1], mode='w') as f:
+            json.dump(
+                {
+                    'state_mean': self._state_mean.tolist(),
+                    'state_std': self._state_std.tolist(),
+                    'control_mean': self._control_mean.tolist(),
+                    'control_std': self._control_std.tolist(),
+                },
+                f,
+            )
+
+
+    def load(self, file_path: Tuple[str, ...]) -> None:
+        self._inputnet.load_state_dict(
+            torch.load(file_path[0], map_location=self.device_name)
+        )
+        with open(file_path[1], mode='r') as f:
+            norm = json.load(f)
+        self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
+        self._state_std = np.array(norm['state_std'], dtype=np.float64)
+        self._control_mean = np.array(norm['control_mean'], dtype=np.float64)
+        self._control_std = np.array(norm['control_std'], dtype=np.float64)
+
+    def get_file_extension(self) -> Tuple[str, ...]:
+        return 'pth', 'json'
+
+    def get_parameter_count(self) -> int:
+        return sum([
+            sum(p.numel() for p in self._inputnet.parameters() if p.requires_grad),
+            sum(p.numel() for p in self._predictor.parameters() if p.requires_grad),
+            sum(p.numel() for p in self._initializer.parameters() if p.requires_grad)
+        ])
