@@ -895,12 +895,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             self.loss = loss.MSGELoss().to(self.device)
         else:
             raise ValueError('loss can only be "mse" or "msge"')
-
+        
         self._predictor = rnn.LtiRnnConvConstr(
             nx=self.nx,
             #in dimesion is state+ output of inputnet dismesion
             #TODO: make it variable when making the inputnet variable
-            nu=self.state_dim+4+self.state_dim,
+            nu=self.state_dim+self.control_dim,################################
             ny=self.state_dim,
             nw=self.recurrent_dim,
             gamma=self.gamma,
@@ -982,17 +982,17 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
                 f'Epoch Loss (Initializer): {total_loss}'
             )
-            # print(
-            #     f'Epoch {i + 1}/{self.epochs_initializer}\t'
-            #     f'Epoch Loss (Initializer): {total_loss}'
-            # )
+            print(
+                f'Epoch {i + 1}/{self.epochs_initializer}\t'
+                f'Epoch Loss (Initializer): {total_loss}'
+            )
             initializer_loss.append(total_loss)
         time_end_init = time.time()
 
         ###########################
         #InputFNN training
         #################################
-        #TODO
+        #TODO: reactivate this
         inputfnn_losses = []
         dataset = TimeSeriesDataset(us, ys)
         for i in range(self.epochs_InputFNN):
@@ -1067,17 +1067,17 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
-
+######
                 linear_inputs = self._inputnet.forward(batch['control_prev'].float().to(self.device))
                 states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std).float().to(self.device)
                 lin_states = self._diskretized_linear.forward(
                     input_forces= linear_inputs,
                     states=states_prev_,
                     residual_errors= 0) #since onestep prediction, the input state has no error
-                #is just linear inputs shifted by one (except that it has one more state at the and and one less )
-                # so could be done computationaly more efficient
-                #=> the rnn should also get the previous control inputs as input, no?
-                rnn_control_inputs = self._inputnet.forward(batch['control_prev'].float().to(self.device))
+#######                                
+                #TODO:  for this control input the initializer is trained wrong no?
+                #       Because it is trained one step to far (not with the prev stuff)?
+
                 #TODO: rnn needs to have the lin_states and the controls as input
                 #TODO: the hidden state cannot, like in the linear case, be set to the true state
                 #      in every step, so best is to let it run on the sequence with it 
@@ -1097,43 +1097,34 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #            linearised system states have all actual system states we could replace the 
                 #            rnn with a FNN since it wouldnt need the hidden state)
                 #            => would also be if we can show that behaviour
-                rnn_input = torch.concat((linear_inputs,lin_states,states_prev_),dim=2)
-                res_error, _ = self._predictor.forward(x_pred = rnn_input)#,hx=hx)
-                corr_states = lin_states+res_error.float().to(self.device)
+#######
+                #!!! The lininput (output of inputFNN) is to large
+                #and makes learning unstable
+                #TODO:  keep in mind that our gamma restriction is input
+                #       output gain so if the external input is to small
+                #       it will most likely cause a larger gain 
+                #       (have to check this) so to work with our barrier
+                #       function it will probably lessen performance
+                #TODO: am i sure the rnn gets also the prev control?
+                control_in =batch['control_prev'].float().to(self.device)#########control_prev
+                rnn_input = torch.concat((control_in,lin_states),dim=2)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
+                corr_states = lin_states+res_error.to(self.device)
                 barrier = self._predictor.get_barrier(t).to(self.device)
-                #batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
-                batch_loss = F.mse_loss(corr_states,batch['states'].float().to(self.device))
+
+######
+                # control_in =batch['control_prev'].float().to(self.device)
+                # state_in =batch['states_prev'].float().to(self.device)
+                # rnn_input = torch.concat((control_in,lin_states),dim=2)
+                # corr_states, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
+                # corr_states = corr_states.to(self.device)
+                # barrier = self._predictor.get_barrier(t).to(self.device)
+#####
+                batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
+                # batch_loss = F.mse_loss(corr_states,batch['states'].float().to(self.device))
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
                 # batch_loss.backward()
-
-                # init_error = 0
-                # last_init_cont = batch['x0_control'][:,-1,:]#.unsqueeze(0) unsure about unsqeeze
-                # last_init_state = batch['x0_states'][:,-1,:]#.unsqueeze(0)
-
-                # #we initialize with x(-1) and u(-1) and e=0 to get a x(0) with an error in the first step
-                # #so that we can initialize the rnn with the initializer as usual
-                # #and let it compute an error in the first step
-                # init_forces = self._inputnet(last_init_cont)
-                # last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
-                # init_state = self._diskretized_linear.forward(
-                #     input_forces= init_forces,
-                #     states=last_init_state,
-                #     residual_errors= init_error)
-
-                # #TODO:since i need to get the current state to calculate 
-                # # the current error with the rnn
-                # # which i then need to calculate the next state, 
-                # # it means i either change the y output to be the next state
-                # # and kind of buffer it to next step
-                # # OR better, ==>>> i simply take the y_output out of the forward step of the physikal
-                # # and manage it here since it is just the state anyway
-                
-                # self._diskretized_linear.forward(
-                #     input_forces= forces,
-                #     states=states,
-                #     residual_errors= error)
-
 
                 #stuff for constraint checking
                 ################
@@ -1252,7 +1243,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             min_eigenvalue=np.asarray(min_eigenvalue),
             training_time_initializer=np.asarray(time_total_init),
             training_time_predictor=np.asarray(time_total_pred),
-            inputfnn_losses=np.asarray(inputfnn_losses),
+            # inputfnn_losses=np.asarray(inputfnn_losses),#######################
         )
     
 
@@ -1264,7 +1255,67 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
     ) -> Union[
         NDArray[np.float64], Tuple[NDArray[np.float64], Dict[str, NDArray[np.float64]]]
     ]:
-        pass
+        if (
+            self.control_mean is None
+            or self.control_std is None
+            or self.state_mean is None
+            or self.state_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot simulate.')
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        
+        self._diskretized_linear.eval()
+        self._inputnet.eval()
+        self._initializer.eval()
+        self._predictor.eval()
+
+        init_cont = utils.normalize(initial_control, self.control_mean, self.control_std)
+        init_state = utils.normalize(initial_state, self.state_mean, self.state_std)
+        control_ = utils.normalize(control, self.control_mean, self.control_std)
+
+        control_ = torch.from_numpy(control_).float().to(self.device)
+        init_cont = torch.from_numpy(init_cont).float().to(self.device)
+        init_state = torch.from_numpy(init_state).float().to(self.device)
+
+        with torch.no_grad():
+            last_init_cont = init_cont[-1,:].unsqueeze(0)
+            last_init_state = init_state[-1,:].unsqueeze(0)
+            #init the diskretized_linear
+            input_lin_ = self._inputnet.forward(last_init_cont)
+            last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
+
+            states_next = self._diskretized_linear.forward(input_forces=input_lin_,states=last_init_state)
+            outputs =[]
+            input_lin = self._inputnet.forward(control_)
+
+            init_x = (
+                torch.from_numpy(np.hstack((init_cont[1:], init_state[:-1])))
+                .unsqueeze(0)
+                .float()
+                .to(self.device)
+            )
+            # pred_x = torch.from_numpy(control_).unsqueeze(0).float().to(self.device)
+            _, hx = self._initializer.forward(init_x)
+            x = hx
+
+            for in_lin, control_in in zip(input_lin,control_):
+                #TODO: wrong control step?
+                rnn_in = torch.concat((control_in,states_next),dim=2)
+                eout, xx = self._predictor.forward(rnn_in, hx=x)
+                x = xx[0]
+                corr_state = states_next+eout
+                outputs.append(corr_state)
+                states_next = self._diskretized_linear.forward(input_forces=in_lin.unsqueeze(0),states=corr_state
+                                                               )
+            
+ 
+            y_np: NDArray[np.float64] = (
+                outputs.cpu().detach().squeeze().numpy().astype(np.float64)
+            )
+
+        y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
+        return y_np
 
     def save(self, file_path: Tuple[str, ...]) -> None:
         if (
@@ -1275,7 +1326,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         ):
             raise ValueError('Model has not been trained and cannot be saved.')
         torch.save(self._inputnet.state_dict(), file_path[0])
-        with open(file_path[1], mode='w') as f:
+        torch.save(self._initializer.state_dict(), file_path[1])
+        torch.save(self._predictor.state_dict(), file_path[2])
+        with open(file_path[3], mode='w') as f:
             json.dump(
                 {
                     'state_mean': self._state_mean.tolist(),
@@ -1291,7 +1344,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         self._inputnet.load_state_dict(
             torch.load(file_path[0], map_location=self.device_name)
         )
-        with open(file_path[1], mode='r') as f:
+        self._initializer.load_state_dict(
+            torch.load(file_path[1], map_location=self.device_name)
+        )
+        self._predictor.load_state_dict(
+            torch.load(file_path[2], map_location=self.device_name)
+        )
+        with open(file_path[3], mode='r') as f:
             norm = json.load(f)
         self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
         self._state_std = np.array(norm['state_std'], dtype=np.float64)
@@ -1299,7 +1358,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         self._control_std = np.array(norm['control_std'], dtype=np.float64)
 
     def get_file_extension(self) -> Tuple[str, ...]:
-        return 'pth', 'json'
+        return 'inputfnn.pth','initializer.pth', 'predictor.pth', 'json'
 
     def get_parameter_count(self) -> int:
         return sum([
