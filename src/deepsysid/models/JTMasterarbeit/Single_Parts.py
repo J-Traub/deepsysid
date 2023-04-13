@@ -276,6 +276,26 @@ class DiskretizedLinear(nn.Module):
         #dont calculate y here, rather outside since else the calculation order might be wierd
         return states_next
     
+    def calc_output(self, 
+            states: torch.Tensor,
+            input_forces: torch.Tensor = None,
+            ) -> torch.Tensor:
+        """Has no real function yet and just gives out the states but in case of a
+        system with direct feedtrough or where C is not Identity it is better
+        and cleaner. Represents the general Output of a linear system:
+            y=C*x+D*u.
+
+        Args:
+            states (torch.Tensor): current state of the diskretized linear model
+            input_forces (torch.Tensor, optional): control input forces. Defaults to None.
+        
+        Returns:
+            torch.Tensor: current output of the diskretized linear model
+        """
+        y = states
+
+        return y
+    
 
 
 class LinearAndInputFNNConfig(DynamicIdentificationModelConfig):
@@ -1067,13 +1087,46 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
-######
-                linear_inputs = self._inputnet.forward(batch['control_prev'].float().to(self.device))
+######          
+                #computationally efficient but not good to read and understand
+                #explaination: 
+                # we need to initialize the internal state of the _diskretized_linear
+                # because else the first state would be x0 from the training data
+                # without error and wouldnt train our RNN correctly, and since we
+                # use one-step prediction we dont need any loop and can just compute 
+                # the following next states in one go with the training data. Thats why
+                # we need the _prev values. The lin_states then represent the internal
+                # states of the "current" timestep (not the prev) and we can then output those 
+                linear_inputs_prev = self._inputnet.forward(batch['control_prev'].float().to(self.device))
+                linear_inputs_curr = self._inputnet.forward(batch['control'].float().to(self.device))
                 states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std).float().to(self.device)
                 lin_states = self._diskretized_linear.forward(
-                    input_forces= linear_inputs,
+                    input_forces= linear_inputs_prev,
                     states=states_prev_,
-                    residual_errors= 0) #since onestep prediction, the input state has no error
+                    residual_errors= 0, #since it's onestep prediction, the input state has no error
+                )
+                #this is functionally the same as out_lin = lin_states but is good for understanding
+                out_lin = self._diskretized_linear.calc_output(
+                    input_forces= linear_inputs_curr,
+                    states= lin_states
+                )
+                #TODO:use for multistep prediction
+                # # # #hopefully more understandable:
+                # # # # as we initialize the hiddenstate of the RNN we need to initialize
+                # # # # the internal state of the _diskretized_linear the first computation
+                # # # # of the error can be omitted for this since we can expect that the
+                # # # # initial state as no error 
+
+                # # # #we need only last point of the x0 seqence for init of the linear
+                # # # init_control = batch['x0_control'].float().to(self.device)[-1,:]
+                # # # init_state = batch['x0_states'].float().to(self.device)[-1,:]
+                # # # init_input = self._inputnet.forward(init_control)
+                # # # first_state = self._diskretized_linear.forward(
+                # # #     input_forces= init_input,
+                # # #     states=init_state,
+                # # #     residual_errors= 0)
+                
+                
 #######                                
                 #TODO:  for this control input the initializer is trained wrong no?
                 #       Because it is trained one step to far (not with the prev stuff)?
@@ -1096,6 +1149,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #            need to keep that information in its hidden state (and in the case that the
                 #            linearised system states have all actual system states we could replace the 
                 #            rnn with a FNN since it wouldnt need the hidden state)
+                #            => would also need to additionally get the previous control input to
+                #               make the hidden state redundant (in case the linearised system is markov)
                 #            => would also be if we can show that behaviour
 #######
                 #!!! The lininput (output of inputFNN) is to large
@@ -1105,15 +1160,15 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #       it will most likely cause a larger gain 
                 #       (have to check this) so to work with our barrier
                 #       function it will probably lessen performance
-                #TODO: am i sure the rnn gets also the prev control?
-                control_in =batch['control_prev'].float().to(self.device)#########control_prev
-                rnn_input = torch.concat((control_in,lin_states),dim=2)
+
+                control_in =batch['control'].float().to(self.device)
+                rnn_input = torch.concat((control_in,out_lin),dim=2)
                 res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
-                corr_states = lin_states+res_error.to(self.device)
+                corr_states = out_lin+res_error.to(self.device)
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
 ######
-                # control_in =batch['control_prev'].float().to(self.device)
+                # control_in =batch['control'].float().to(self.device)
                 # state_in =batch['states_prev'].float().to(self.device)
                 # rnn_input = torch.concat((control_in,lin_states),dim=2)
                 # corr_states, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
@@ -1275,19 +1330,24 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         control_ = utils.normalize(control, self.control_mean, self.control_std)
 
         control_ = torch.from_numpy(control_).float().to(self.device)
-        init_cont = torch.from_numpy(init_cont).float().to(self.device)
-        init_state = torch.from_numpy(init_state).float().to(self.device)
+        init_cont = torch.from_numpy(init_cont)
+        init_state = torch.from_numpy(init_state)
 
         with torch.no_grad():
-            last_init_cont = init_cont[-1,:].unsqueeze(0)
-            last_init_state = init_state[-1,:].unsqueeze(0)
-            #init the diskretized_linear
-            input_lin_ = self._inputnet.forward(last_init_cont)
+            last_init_cont = init_cont[-1,:].unsqueeze(0).float().to(self.device)
+            last_init_state = init_state[-1,:].unsqueeze(0).float().to(self.device)
+            
+            init_input_lin_ = self._inputnet.forward(last_init_cont)
             last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
 
-            states_next = self._diskretized_linear.forward(input_forces=input_lin_,states=last_init_state)
-            outputs =[]
-            input_lin = self._inputnet.forward(control_)
+            #init the diskretized_linear internal state
+            states_next = self._diskretized_linear.forward(
+                input_forces=init_input_lin_,
+                states=last_init_state,
+                residual_errors=0, #initial state has no error
+                )
+            #needs batch and sequence format
+            states_next = states_next.unsqueeze(0)
 
             init_x = (
                 torch.from_numpy(np.hstack((init_cont[1:], init_state[:-1])))
@@ -1295,23 +1355,36 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 .float()
                 .to(self.device)
             )
-            # pred_x = torch.from_numpy(control_).unsqueeze(0).float().to(self.device)
+
+            #init the hidden state of our RNN
             _, hx = self._initializer.forward(init_x)
             x = hx
 
+            input_lin = self._inputnet.forward(control_)
+
+            outputs =[]
             for in_lin, control_in in zip(input_lin,control_):
-                #TODO: wrong control step?
-                rnn_in = torch.concat((control_in,states_next),dim=2)
-                eout, xx = self._predictor.forward(rnn_in, hx=x)
-                x = xx[0]
-                corr_state = states_next+eout
+
+                out_lin = self._diskretized_linear.calc_output(
+                    states = states_next,
+                )
+                #needs batch and sequence format
+                control_in_ = control_in.unsqueeze(0).unsqueeze(0)
+                rnn_in = torch.concat([control_in_, out_lin],dim=2)
+                eout, x = self._predictor.forward(rnn_in, hx=x)
+                # hx has a very wierd format and is not the same as the output x
+                x = [[x[0],x[0]]]
+                corr_state = out_lin+eout.to(self.device)
                 outputs.append(corr_state)
-                states_next = self._diskretized_linear.forward(input_forces=in_lin.unsqueeze(0),states=corr_state
-                                                               )
+                states_next = self._diskretized_linear.forward(
+                    input_forces=in_lin.unsqueeze(0),
+                    states=corr_state,
+                    )
+
             
- 
+            outputs_tensor = torch.cat(outputs, dim=1)
             y_np: NDArray[np.float64] = (
-                outputs.cpu().detach().squeeze().numpy().astype(np.float64)
+                outputs_tensor.cpu().detach().squeeze().numpy().astype(np.float64)
             )
 
         y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
