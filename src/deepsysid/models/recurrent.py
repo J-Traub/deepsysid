@@ -680,6 +680,10 @@ class ConstrainedRnn(base.NormalizedHiddenStateInitializerPredictorModel):
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
                 f'Epoch Loss (Initializer): {total_loss}'
             )
+            print(
+                f'Epoch {i + 1}/{self.epochs_initializer}\t'
+                f'Epoch Loss (Initializer): {total_loss}'
+            )
             initializer_loss.append(total_loss)
         time_end_init = time.time()
         predictor_dataset = RecurrentPredictorDataset(us, ys, self.sequence_length)
@@ -781,6 +785,13 @@ class ConstrainedRnn(base.NormalizedHiddenStateInitializerPredictorModel):
                 min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
 
             logger.info(
+                f'Epoch {i + 1}/{self.epochs_predictor}\t'
+                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Barrier: {barrier:1f}\t'
+                f'Backtracking Line Search iteration: {bls_iter}\t'
+                f'Max accumulated gradient norm: {max_grad:1f}'
+            )
+            print(
                 f'Epoch {i + 1}/{self.epochs_predictor}\t'
                 f'Total Loss (Predictor): {total_loss:1f} \t'
                 f'Barrier: {barrier:1f}\t'
