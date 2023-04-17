@@ -767,7 +767,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             or self._control_mean is None
             or self._control_std is None
         ):
-            raise ValueError('Model has not been trained and cannot be saved.')   
+            raise ValueError('Model has not been trained and cannot be saved.')  
 
         self._inputnet.eval()
         self._diskretized_linear.eval()
@@ -1561,6 +1561,49 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
         return y_np
+    
+    
+    def simulate_onestep(
+        self,
+        controls: NDArray[np.float64],
+        states: NDArray[np.float64],
+        forces: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be simulated.')   
+
+        self._inputnet.eval()
+        self._diskretized_linear.eval()
+        self._predictor.eval()
+        self._initializer.eval()
+
+        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+
+        controls_ = torch.from_numpy(controls_).float().to(self.device)
+        states_ = torch.from_numpy(states).float().to(self.device)
+        forces_ = torch.from_numpy(forces).float().to(self.device)
+
+        with torch.no_grad():
+            input_forces = self._inputnet.forward(controls_)
+            states_next = self._diskretized_linear.forward(input_forces,states_)
+            states_next_with_true_input_forces = self._diskretized_linear.forward(forces_,states_)
+            #again the problem with the hidden state:
+            #   altough the diskretized linear does one step prediction
+            #   the RNN has to do a sequence, but since idealy it corrects
+            #   the diskretized linears predicted state perfectly, the fact 
+            #   that the diskretized linear always gets the true state could be
+            #   what the RNN is trained for.
+            #TODO:have to seperate the sequences to reset the initializer  
+
+        return (input_forces.detach().cpu().numpy().astype(np.float64),
+                 states_next.detach().cpu().numpy().astype(np.float64),
+                 states_next_with_true_input_forces.detach().cpu().numpy().astype(np.float64))
+
 
     def save(self, file_path: Tuple[str, ...]) -> None:
         if (
