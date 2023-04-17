@@ -756,6 +756,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
         outputs = torch.vstack(outputs)
         return outputs.detach().cpu().numpy().astype(np.float64)
     
+
     def simulate_inputforces_onestep(
         self,
         controls: NDArray[np.float64],
@@ -768,7 +769,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             or self._control_mean is None
             or self._control_std is None
         ):
-            raise ValueError('Model has not been trained and cannot simulate.')   
+            raise ValueError('Model has not been trained and cannot simulate.')  
 
         self._inputnet.eval()
         self._diskretized_linear.eval()
@@ -783,11 +784,15 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             states_next = self._diskretized_linear.forward(input_forces,states_)
             states_next_with_true_input_forces = self._diskretized_linear.forward(forces_,states_)
 
+        states_pred = torch.full(states_.shape, float('nan'))
+        states_pred[:,1:,:] = states_next[:,:-1,:]
+        states_pred_with_true_input_forces = torch.full(states_.shape, float('nan'))
+        states_pred_with_true_input_forces[:,1:,:]  = states_next_with_true_input_forces[:,:-1,:]
+
 
         return (input_forces.detach().cpu().numpy().astype(np.float64),
-                 states_next.detach().cpu().numpy().astype(np.float64),
-                 states_next_with_true_input_forces.detach().cpu().numpy().astype(np.float64))
-
+                 states_pred.detach().cpu().numpy().astype(np.float64),
+                 states_pred_with_true_input_forces.detach().cpu().numpy().astype(np.float64))
 
 
     def save(self, file_path: Tuple[str, ...]) -> None:
@@ -1562,6 +1567,92 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
         return y_np
+    
+    
+    def simulate_inputforces_onestep(
+        self,
+        controls: NDArray[np.float64],
+        states: NDArray[np.float64],
+        forces: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be simulated.')   
+
+        self._inputnet.eval()
+        self._diskretized_linear.eval()
+        self._predictor.eval()
+        self._initializer.eval()
+
+        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+        states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
+
+        controls_ = torch.from_numpy(controls_).float().to(self.device)
+        states_ = torch.from_numpy(states).float().to(self.device)
+        forces_ = torch.from_numpy(forces).float().to(self.device)
+        states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
+
+        x0_control = controls_[:, :50, :]
+        x0_states_normed_ = states_normed_[:, :50, :]
+        x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
+
+        #the 49 incooperates the init of the diskretized linear 
+        #and we then drop the last state since, while we can compute
+        # the last next state we dont have meassurements there 
+        prev_cont_in = controls_[:, 49:, :]
+        lin_state_in = states_[:, 49:, :]
+        lin_forces_in = forces_[:, 49:, :]
+
+        #for the RNN we now need the values from 50 onward
+        curr_cont_in =controls_[:, 50:, :]
+
+        with torch.no_grad():
+            prev_input_forces = self._inputnet.forward(prev_cont_in)
+
+            #drop last next state to fit with RNN inputs and because see previous comment
+            states_next = self._diskretized_linear.forward(prev_input_forces,lin_state_in)[:,:-1,:]
+            states_next_with_true_input_forces = self._diskretized_linear.forward(lin_forces_in,lin_state_in)[:,:-1,:]
+            
+            curr_input_forces_ = self._inputnet.forward(curr_cont_in)
+            #mostly for better understanding of the timesteps
+            outlin = self._diskretized_linear.calc_output(
+                states = states_next,
+                input_forces=curr_input_forces_
+                )
+            true_input_pred_states_ = self._diskretized_linear.calc_output(
+                states = states_next_with_true_input_forces,
+                input_forces=curr_input_forces_
+                )
+            #again the problem with the hidden state:
+            #   altough the diskretized linear does one step prediction
+            #   the RNN has to do a sequence, but since idealy it corrects
+            #   the diskretized linears predicted state perfectly, the fact 
+            #   that the diskretized linear always gets the true state could be
+            #   what the RNN is trained for.
+            
+            _, hx = self._initializer.forward(x0_init)
+            
+            rnn_input = torch.concat((curr_cont_in,outlin),dim=2)
+            res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
+            pred_states_ = outlin + res_error.to(self.device)
+
+            filler_forces_ = self._inputnet.forward(x0_control)
+
+        #fill the start that is used for initialisation with nans
+        filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
+        filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
+        pred_states = torch.concat((filler_nans_states,pred_states_),dim=1)
+        true_input_pred_states = torch.concat((filler_nans_states,true_input_pred_states_),dim=1)
+        curr_input_forces = torch.concat((filler_nans_cont,curr_input_forces_),dim=1)
+
+        return (curr_input_forces.detach().cpu().numpy().astype(np.float64),
+                 pred_states.detach().cpu().numpy().astype(np.float64),
+                 true_input_pred_states.detach().cpu().numpy().astype(np.float64))
+
 
     def save(self, file_path: Tuple[str, ...]) -> None:
         if (
