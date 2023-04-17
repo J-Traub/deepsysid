@@ -725,7 +725,8 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             or self._control_mean is None
             or self._control_std is None
         ):
-            raise ValueError('Model has not been trained and cannot be saved.')
+            raise ValueError('Model has not been trained and cannot simulate.')
+        
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
         self._inputnet.eval()
@@ -767,7 +768,7 @@ class LinearAndInputFNN(base.NormalizedControlStateModel):
             or self._control_mean is None
             or self._control_std is None
         ):
-            raise ValueError('Model has not been trained and cannot be saved.')   
+            raise ValueError('Model has not been trained and cannot simulate.')   
 
         self._inputnet.eval()
         self._diskretized_linear.eval()
@@ -1569,7 +1570,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             or self._control_mean is None
             or self._control_std is None
         ):
-            raise ValueError('Model has not been trained and cannot be saved.')
+            raise ValueError('Model has not been trained and cannot simulate.')
         torch.save(self._inputnet.state_dict(), file_path[0])
         torch.save(self._initializer.state_dict(), file_path[1])
         torch.save(self._predictor.state_dict(), file_path[2])
@@ -1583,7 +1584,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 },
                 f,
             )
-
 
     def load(self, file_path: Tuple[str, ...]) -> None:
         self._inputnet.load_state_dict(
