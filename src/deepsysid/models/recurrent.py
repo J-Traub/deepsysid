@@ -756,6 +756,13 @@ class ConstrainedRnn(base.NormalizedHiddenStateInitializerPredictorModel):
                             f'Backtracking line search exceeded maximum iteration. \t'
                             f'Constraints satisfied? {self._predictor.check_constr()}'
                         )
+                        print(
+                            f'Epoch {i+1}/{self.epochs_predictor}\t'
+                            f'max real eigenvalue of M: '
+                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
+                            f'Backtracking line search exceeded maximum iteration. \t'
+                            f'Constraints satisfied? {self._predictor.check_constr()}'
+                        )                        
                         time_end_pred = time.time()
                         time_total_init = time_end_init - time_start_init
                         time_total_pred = time_end_pred - time_start_pred
