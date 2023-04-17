@@ -1282,7 +1282,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         time_start_pred = time.time()
         t = self.initial_decay_parameter
-        predictor_loss: List[np.float64] = []
+        predictor_loss_multistep: List[np.float64] = []
         min_eigenvalue: List[np.float64] = []
         max_eigenvalue: List[np.float64] = []
         barrier_value: List[np.float64] = []
@@ -1407,6 +1407,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             index=np.asarray(i),
                             epoch_loss_initializer=np.asarray(initializer_loss),
                             epoch_loss_predictor=np.asarray(predictor_loss),
+                            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
                             barrier_value=np.asarray(barrier_value),
                             backtracking_iter=np.asarray(backtracking_iter),
                             gradient_norm=np.asarray(gradient_norm),
@@ -1444,7 +1445,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss.append(np.float64(total_loss))
+            predictor_loss_multistep.append(np.float64(total_loss))
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
@@ -1466,6 +1467,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             index=np.asarray(i),
             epoch_loss_initializer=np.asarray(initializer_loss),
             epoch_loss_predictor=np.asarray(predictor_loss),
+            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+            inputfnn_losses=np.asarray(inputfnn_losses),
             barrier_value=np.asarray(barrier_value),
             backtracking_iter=np.asarray(backtracking_iter),
             gradient_norm=np.asarray(gradient_norm),
@@ -1473,7 +1476,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             min_eigenvalue=np.asarray(min_eigenvalue),
             training_time_initializer=np.asarray(time_total_init),
             training_time_predictor=np.asarray(time_total_pred),
-            # inputfnn_losses=np.asarray(inputfnn_losses),#######################
         )
     
 
