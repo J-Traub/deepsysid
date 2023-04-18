@@ -1013,7 +1013,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
                 f'Epoch Loss (Initializer): {total_loss}'
             )
-            initializer_loss.append(total_loss)
+            initializer_loss.append([i,np.float64(total_loss)])
         time_end_init = time.time()
 
         ###########################
@@ -1261,7 +1261,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss.append(np.float64(total_loss))
+            predictor_loss.append([i,np.float64(total_loss)])
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
@@ -1408,6 +1408,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             epoch_loss_initializer=np.asarray(initializer_loss),
                             epoch_loss_predictor=np.asarray(predictor_loss),
                             epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+                            inputfnn_losses=np.asarray(inputfnn_losses),
                             barrier_value=np.asarray(barrier_value),
                             backtracking_iter=np.asarray(backtracking_iter),
                             gradient_norm=np.asarray(gradient_norm),
@@ -1445,7 +1446,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss_multistep.append(np.float64(total_loss))
+            predictor_loss_multistep.append([i,np.float64(total_loss)])
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
