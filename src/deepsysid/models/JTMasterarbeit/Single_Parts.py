@@ -1224,6 +1224,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             index=np.asarray(i),
                             epoch_loss_initializer=np.asarray(initializer_loss),
                             epoch_loss_predictor=np.asarray(predictor_loss),
+                            inputfnn_losses=np.asarray(inputfnn_losses),
                             barrier_value=np.asarray(barrier_value),
                             backtracking_iter=np.asarray(backtracking_iter),
                             gradient_norm=np.asarray(gradient_norm),
