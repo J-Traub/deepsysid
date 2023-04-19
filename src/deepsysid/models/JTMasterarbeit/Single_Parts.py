@@ -1175,29 +1175,18 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 control_in =batch['control'].float().to(self.device)
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
                 res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
+                #I DONT denormalise the res_error since here i stay in normalised states for the loss
+                #Also in simulation I can simply denormalise the corrected state
                 res_error = res_error.to(self.device)
-                #denormalize the reserror
-                #TODO:  am i sure about the denormalize? especially the mean since the error is probably zero centered
-                #       i.e. the mean of u is probably have a mean at 5 but the reserror should be at mean zero however,
-                #       the scaling should still be usefull 
-                res_error_denorm = utils.denormalize(res_error, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
                 #calculated the corrected output and barrier
-                corr_states =  res_error_denorm# out_lin+res_error_denorm
+                # it is impotant to note that batch['states'] are normalised states (see loss)
+                corr_states = out_lin_norm+res_error
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
-######
-                # control_in =batch['control'].float().to(self.device)
-                # state_in =batch['states_prev'].float().to(self.device)
-                # rnn_input = torch.concat((control_in,lin_states),dim=2)
-                # corr_states, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
-                # corr_states = corr_states.to(self.device)
-                # barrier = self._predictor.get_barrier(t).to(self.device)
-#####
                 batch_loss = self.loss.forward(corr_states, batch['states'].float().to(self.device))
-                # batch_loss = F.mse_loss(corr_states,batch['states'].float().to(self.device))
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
-                # batch_loss.backward()
+
 
                 #stuff for constraint checking
                 ################
@@ -1317,169 +1306,174 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         gradient_norm: List[np.float64] = []
         backtracking_iter: List[np.float64] = []
         
-        # for i in range(self.epochs_predictor):
-        #     data_loader = data.DataLoader(
-        #         predictor_dataset, self.batch_size, shuffle=True, drop_last=True
-        #     )
-        #     total_loss = 0
-        #     max_grad = 0
-        #     for batch_idx, batch in enumerate(data_loader):
-        #         self._predictor.zero_grad()
+        for i in range(self.epochs_predictor):
+            data_loader = data.DataLoader(
+                predictor_dataset, self.batch_size, shuffle=True, drop_last=True
+            )
+            total_loss = 0
+            max_grad = 0
+            for batch_idx, batch in enumerate(data_loader):
+                self._predictor.zero_grad()
 
-        #         # Initialize predictor with state of initializer network
-        #         _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
+                # Initialize predictor with state of initializer network
+                _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
 
-        #         #hopefully more understandable:
-        #         # as we initialize the hiddenstate of the RNN we need to initialize
-        #         # the internal state of the _diskretized_linear the first computation
-        #         # of the error can be omitted for this since we can expect that the
-        #         # initial state as no error 
+                #hopefully more understandable:
+                # as we initialize the hiddenstate of the RNN we need to initialize
+                # the internal state of the _diskretized_linear the first computation
+                # of the error can be omitted for this since we can expect that the
+                # initial state as no error 
 
-        #         #we need only last point of the x0 seqence for init of the linear
-        #         init_control = batch['x0_control'].float().to(self.device)[:,-1:,:]
-        #         init_state = batch['x0_states'].float().to(self.device)[:,-1:,:]
-        #         init_input = self._inputnet.forward(init_control)
-        #         states_next = self._diskretized_linear.forward(
-        #             input_forces= init_input,
-        #             states=init_state,
-        #             residual_errors= 0)
+                #we need only the last point of the x0 sequence for init of the linear
+                init_control = batch['x0_control'].float().to(self.device)[:,-1:,:]
+                init_state = batch['x0_states'].float().to(self.device)[:,-1:,:]
+                init_input = self._inputnet.forward(init_control)
+                states_next = self._diskretized_linear.forward(
+                    input_forces= init_input,
+                    states=init_state,
+                    residual_errors= 0)
                 
-        #         #get all inputs
-        #         control_ = batch['control'].float().to(self.device)
-        #         input_lin = self._inputnet.forward(control_)
-        #         x = hx
+                #get all inputs
+                control_ = batch['control'].float().to(self.device)
+                input_lin = self._inputnet.forward(control_)
+                x = hx
                  
-        #         outputs =[]
-        #         #get the sequence dimension, sanity check: is sequence length?
-        #         seq_len = control_.size(dim=1)
-        #         for seq_step in range(seq_len):
-        #             #seq_step:seq_step+1 preserves the original dimensionality
-        #             in_lin = input_lin[:,seq_step:seq_step+1,:]
-        #             control_in = control_[:,seq_step:seq_step+1,:]
+                outputs =[]
+                #get the sequence dimension, sanity check: is sequence length?
+                seq_len = control_.size(dim=1)
+                for seq_step in range(seq_len):
+                    #seq_step:seq_step+1 preserves the original dimensionality
+                    in_lin = input_lin[:,seq_step:seq_step+1,:]
+                    control_in = control_[:,seq_step:seq_step+1,:]
                     
-        #             out_lin = self._diskretized_linear.calc_output(
-        #                 states = states_next,
-        #             )
+                    out_lin = self._diskretized_linear.calc_output(
+                        states = states_next,
+                    )
+                    
+                    #normalize the out_lin
+                    out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-        #             rnn_in = torch.concat([control_in, out_lin],dim=2)
-        #             eout, x = self._predictor.forward(rnn_in, hx=x)
-        #             eout = eout.to(self.device)
-        #             # hx has a very wierd format and is not the same as the output x
-        #             x = [[x[0],x[0]]]
-        #             corr_state = out_lin+eout
-        #             outputs.append(corr_state)
-        #             states_next = self._diskretized_linear.forward(
-        #                 input_forces=in_lin,
-        #                 states=out_lin,
-        #                 residual_errors= eout
-        #                 )
-        #         outputs_tensor = torch.cat(outputs, dim=1)
-        #         barrier = self._predictor.get_barrier(t).to(self.device)
+                    rnn_in = torch.concat([control_in, out_lin_norm],dim=2)
+                    eout, x = self._predictor.forward(rnn_in, hx=x)
+                    eout = eout.to(self.device)
+                    # hx has a very wierd format and is not the same as the output x
+                    x = [[x[0],x[0]]]
+                    corr_state = out_lin_norm+eout
+                    outputs.append(corr_state)
 
-        #         true_state = batch['states'].float().to(self.device)
-        #         test1 =outputs_tensor
-        #         test2 =true_state
-        #         batch_loss = self.loss.forward(outputs_tensor, true_state)
-        #         total_loss += batch_loss.item()
-        #         (batch_loss + barrier).backward()
+                    #denormalize the corrected state and use it as new state for the linear
+                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    states_next = self._diskretized_linear.forward(
+                        input_forces=in_lin,
+                        states=corr_state_denorm
+                        )
+                outputs_tensor = torch.cat(outputs, dim=1)
+                barrier = self._predictor.get_barrier(t).to(self.device)
 
-        #         #stuff for constraint checking
-        #         ################
-        #         # gradient infos
-        #         grads_norm = [
-        #             torch.linalg.norm(p.grad)
-        #             for p in filter(
-        #                 lambda p: p.grad is not None, self._predictor.parameters()
-        #             )
-        #         ]
-        #         max_grad += max(grads_norm)
+                true_state = batch['states'].float().to(self.device)
+                test1 =outputs_tensor
+                test2 =true_state
+                batch_loss = self.loss.forward(outputs_tensor, true_state)
+                total_loss += batch_loss.item()
+                (batch_loss + barrier).backward()
 
-        #         # save old parameter set
-        #         old_pars = [
-        #             par.clone().detach() for par in self._predictor.parameters()
-        #         ]
-        #         ################
+                #stuff for constraint checking
+                ################
+                # gradient infos
+                grads_norm = [
+                    torch.linalg.norm(p.grad)
+                    for p in filter(
+                        lambda p: p.grad is not None, self._predictor.parameters()
+                    )
+                ]
+                max_grad += max(grads_norm)
 
-        #         self.optimizer_pred_multistep.step()
-        #         ########################### 
-        #         #Constraints Checking
-        #         #################################
-        #         # perform backtracking line search if constraints are not satisfied
-        #         max_iter = 100
-        #         alpha = 0.5
-        #         bls_iter = 0
-        #         while not self._predictor.check_constr():
-        #             for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-        #                 new_par.data = (
-        #                     alpha * old_par.clone() + (1 - alpha) * new_par.data
-        #                 )
+                # save old parameter set
+                old_pars = [
+                    par.clone().detach() for par in self._predictor.parameters()
+                ]
+                ################
 
-        #             if bls_iter > max_iter - 1:
-        #                 for old_par, new_par in zip(
-        #                     old_pars, self._predictor.parameters()
-        #                 ):
-        #                     new_par.data = old_par.clone()
-        #                 M = self._predictor.get_constraints()
-        #                 logger.warning(
-        #                     f'Epoch {i+1}/{self.epochs_predictor}\t'
-        #                     f'max real eigenvalue of M: '
-        #                     f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-        #                     f'Backtracking line search exceeded maximum iteration. \t'
-        #                     f'Constraints satisfied? {self._predictor.check_constr()}'
-        #                 )
-        #                 time_end_pred = time.time()
-        #                 time_total_init = time_end_init - time_start_init
-        #                 time_total_pred = time_end_pred - time_start_pred
+                self.optimizer_pred_multistep.step()
+                ########################### 
+                #Constraints Checking
+                #################################
+                # perform backtracking line search if constraints are not satisfied
+                max_iter = 100
+                alpha = 0.5
+                bls_iter = 0
+                while not self._predictor.check_constr():
+                    for old_par, new_par in zip(old_pars, self._predictor.parameters()):
+                        new_par.data = (
+                            alpha * old_par.clone() + (1 - alpha) * new_par.data
+                        )
 
-        #                 return dict(
-        #                     index=np.asarray(i),
-        #                     epoch_loss_initializer=np.asarray(initializer_loss),
-        #                     epoch_loss_predictor=np.asarray(predictor_loss),
-        #                     epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
-        #                     inputfnn_losses=np.asarray(inputfnn_losses),
-        #                     barrier_value=np.asarray(barrier_value),
-        #                     backtracking_iter=np.asarray(backtracking_iter),
-        #                     gradient_norm=np.asarray(gradient_norm),
-        #                     max_eigenvalue=np.asarray(max_eigenvalue),
-        #                     min_eigenvalue=np.asarray(min_eigenvalue),
-        #                     training_time_initializer=np.asarray(time_total_init),
-        #                     training_time_predictor=np.asarray(time_total_pred),
-        #                 )
-        #             bls_iter += 1
+                    if bls_iter > max_iter - 1:
+                        for old_par, new_par in zip(
+                            old_pars, self._predictor.parameters()
+                        ):
+                            new_par.data = old_par.clone()
+                        M = self._predictor.get_constraints()
+                        logger.warning(
+                            f'Epoch {i+1}/{self.epochs_predictor}\t'
+                            f'max real eigenvalue of M: '
+                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
+                            f'Backtracking line search exceeded maximum iteration. \t'
+                            f'Constraints satisfied? {self._predictor.check_constr()}'
+                        )
+                        time_end_pred = time.time()
+                        time_total_init = time_end_init - time_start_init
+                        time_total_pred = time_end_pred - time_start_pred
 
-        #     ########################### 
-        #     #Epoch Wrapup
-        #     #################################
-        #     # decay t following the idea of interior point methods
-        #     if i % self.epochs_with_const_decay == 0 and i != 0:
-        #         t = t * 1 / self.decay_rate
-        #         logger.info(f'Decay t by {self.decay_rate} \t' f't: {t:1f}')
+                        return dict(
+                            index=np.asarray(i),
+                            epoch_loss_initializer=np.asarray(initializer_loss),
+                            epoch_loss_predictor=np.asarray(predictor_loss),
+                            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+                            inputfnn_losses=np.asarray(inputfnn_losses),
+                            barrier_value=np.asarray(barrier_value),
+                            backtracking_iter=np.asarray(backtracking_iter),
+                            gradient_norm=np.asarray(gradient_norm),
+                            max_eigenvalue=np.asarray(max_eigenvalue),
+                            min_eigenvalue=np.asarray(min_eigenvalue),
+                            training_time_initializer=np.asarray(time_total_init),
+                            training_time_predictor=np.asarray(time_total_pred),
+                        )
+                    bls_iter += 1
 
-        #     min_ev = np.float64('inf')
-        #     max_ev = np.float64('inf')
-        #     if self.log_min_max_real_eigenvalues:
-        #         min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
+            ########################### 
+            #Epoch Wrapup
+            #################################
+            # decay t following the idea of interior point methods
+            if i % self.epochs_with_const_decay == 0 and i != 0:
+                t = t * 1 / self.decay_rate
+                logger.info(f'Decay t by {self.decay_rate} \t' f't: {t:1f}')
 
-        #     logger.info(
-        #         f'Epoch {i + 1}/{self.epochs_predictor}\t'
-        #         f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
-        #         f'Barrier: {barrier:1f}\t'
-        #         f'Backtracking Line Search iteration: {bls_iter}\t'
-        #         f'Max accumulated gradient norm: {max_grad:1f}'
-        #     )
-        #     print(
-        #         f'Epoch {i + 1}/{self.epochs_predictor}\t'
-        #         f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
-        #         f'Barrier: {barrier:1f}\t'
-        #         f'Backtracking Line Search iteration: {bls_iter}\t'
-        #         f'Max accumulated gradient norm: {max_grad:1f}'
-        #     )
-        #     predictor_loss_multistep.append([i,np.float64(total_loss)])
-        #     barrier_value.append(barrier.cpu().detach().numpy())
-        #     backtracking_iter.append(np.float64(bls_iter))
-        #     gradient_norm.append(np.float64(max_grad))
-        #     max_eigenvalue.append(np.float64(max_ev))
-        #     min_eigenvalue.append(np.float64(min_ev))
+            min_ev = np.float64('inf')
+            max_ev = np.float64('inf')
+            if self.log_min_max_real_eigenvalues:
+                min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
+
+            logger.info(
+                f'Epoch {i + 1}/{self.epochs_predictor}\t'
+                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
+                f'Barrier: {barrier:1f}\t'
+                f'Backtracking Line Search iteration: {bls_iter}\t'
+                f'Max accumulated gradient norm: {max_grad:1f}'
+            )
+            print(
+                f'Epoch {i + 1}/{self.epochs_predictor}\t'
+                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
+                f'Barrier: {barrier:1f}\t'
+                f'Backtracking Line Search iteration: {bls_iter}\t'
+                f'Max accumulated gradient norm: {max_grad:1f}'
+            )
+            predictor_loss_multistep.append([i,np.float64(total_loss)])
+            barrier_value.append(barrier.cpu().detach().numpy())
+            backtracking_iter.append(np.float64(bls_iter))
+            gradient_norm.append(np.float64(max_grad))
+            max_eigenvalue.append(np.float64(max_ev))
+            min_eigenvalue.append(np.float64(min_ev))
 
         ########################### 
         #training wrapup
@@ -1624,6 +1618,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
         _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
         controls_ = torch.from_numpy(controls_).float().to(self.device)
         states_ = torch.from_numpy(states).float().to(self.device)
@@ -1673,9 +1669,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
             rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
             res_error, _ = self._predictor.forward(x_pred = rnn_input,hx=hx)
-            res_error_denorm = utils.denormalize(res_error.to(self.device), _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-            #TODO: this
-            pred_states_ = res_error_denorm.to(self.device)#outlin + res_error.to(self.device)
+            res_error = res_error.to(self.device)
+            #I DONT denormalise the res_error, I can simply denormalise the corrected states
+            pred_states_ = out_lin_norm + res_error
+            pred_states_ = utils.denormalize(pred_states_, _state_mean_torch, _state_std_torch)
+            pred_states_ = pred_states_.to(self.device)
 
             filler_forces_ = self._inputnet.forward(x0_control)
 
@@ -1743,3 +1741,360 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             sum(p.numel() for p in self._predictor.parameters() if p.requires_grad),
             sum(p.numel() for p in self._initializer.parameters() if p.requires_grad)
         ])
+
+
+#mostly just copy pasted but with my own simulate for a better comparison
+class PlainLtiRnnConfig(DynamicIdentificationModelConfig):
+    nx: int
+    recurrent_dim: int
+    num_recurrent_layers_init: int
+    dropout: float
+    sequence_length: int
+    learning_rate: float
+    batch_size: int
+    epochs_initializer: int
+    epochs_predictor: int
+    clip_gradient_norm: float
+    loss: Literal['mse', 'msge']
+
+
+class PlainLtiRnn(base.NormalizedHiddenStateInitializerPredictorModel):
+    CONFIG = PlainLtiRnnConfig
+
+    def __init__(self, config: PlainLtiRnnConfig):
+        super().__init__(config)
+
+        self.device_name = config.device_name
+        self.device = torch.device(self.device_name)
+
+        self.nx = config.nx
+        self.control_dim = len(config.control_names)
+        self.state_dim = len(config.state_names)
+        self.recurrent_dim = config.recurrent_dim
+
+        self.recurrent_dim = config.recurrent_dim
+        self.num_recurrent_layers_init = config.num_recurrent_layers_init
+        self.dropout = config.dropout
+
+        self.sequence_length = config.sequence_length
+        self.learning_rate = config.learning_rate
+        self.batch_size = config.batch_size
+        self.epochs_initializer = config.epochs_initializer
+        self.epochs_predictor = config.epochs_predictor
+
+        self.clip_gradient_norm = config.clip_gradient_norm
+
+        if config.loss == 'mse':
+            self.loss: nn.Module = nn.MSELoss().to(self.device)
+        elif config.loss == 'msge':
+            self.loss = loss.MSGELoss().to(self.device)
+        else:
+            raise ValueError('loss can only be "mse" or "msge"')
+
+        self._predictor = rnn.LtiRnn(
+            nx=self.nx,
+            nu=self.control_dim,
+            ny=self.state_dim,
+            nw=self.recurrent_dim,
+        ).to(self.device)
+
+        self._initializer = rnn.BasicLSTM(
+            input_dim=self.control_dim + self.state_dim,
+            recurrent_dim=self.nx,
+            num_recurrent_layers=self.num_recurrent_layers_init,
+            output_dim=[self.state_dim],
+            dropout=self.dropout,
+        ).to(self.device)
+
+        self.optimizer_pred = optim.Adam(
+            self._predictor.parameters(), lr=self.learning_rate
+        )
+        self.optimizer_init = optim.Adam(
+            self._initializer.parameters(), lr=self.learning_rate
+        )
+
+    def train(
+        self,
+        control_seqs: List[NDArray[np.float64]],
+        state_seqs: List[NDArray[np.float64]],
+    ) -> Dict[str, NDArray[np.float64]]:
+        us = control_seqs
+        ys = state_seqs
+
+        self._predictor.train()
+        self._initializer.train()
+
+        self._control_mean, self._control_std = utils.mean_stddev(us)
+        self._state_mean, self._state_std = utils.mean_stddev(ys)
+
+        us = [
+            utils.normalize(control, self.control_mean, self.control_std)
+            for control in us
+        ]
+        ys = [utils.normalize(state, self.state_mean, self.state_std) for state in ys]
+
+        initializer_dataset = RecurrentInitializerDataset(us, ys, self.sequence_length)
+
+        initializer_loss = []
+        time_start_init = time.time()
+        for i in range(self.epochs_initializer):
+            data_loader = data.DataLoader(
+                initializer_dataset, self.batch_size, shuffle=True, drop_last=True
+            )
+            total_loss = 0.0
+            for batch_idx, batch in enumerate(data_loader):
+                self._initializer.zero_grad()
+                y, _ = self._initializer.forward(batch['x'].float().to(self.device))
+                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+                total_loss += batch_loss.item()
+                batch_loss.backward()
+                self.optimizer_init.step()
+
+            logger.info(
+                f'Epoch {i + 1}/{self.epochs_initializer}\t'
+                f'Epoch Loss (Initializer): {total_loss}'
+            )
+            initializer_loss.append(total_loss)
+        time_end_init = time.time()
+
+        predictor_dataset = RecurrentPredictorDataset(us, ys, self.sequence_length)
+
+        time_start_pred = time.time()
+        predictor_loss: List[np.float64] = []
+        gradient_norm: List[np.float64] = []
+        for i in range(self.epochs_predictor):
+            data_loader = data.DataLoader(
+                predictor_dataset, self.batch_size, shuffle=True, drop_last=True
+            )
+            total_loss = 0
+            max_grad = 0
+            for batch_idx, batch in enumerate(data_loader):
+                self._predictor.zero_grad()
+                # Initialize predictor with state of initializer network
+                _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
+                # Predict and optimize
+                y, _ = self._predictor.forward(
+                    batch['x'].float().to(self.device), hx=hx
+                )
+                y = y.to(self.device)
+                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+                total_loss += batch_loss.item()
+                batch_loss.backward()
+
+                # gradient infos
+                grads_norm = [
+                    torch.linalg.norm(p.grad) for p in self._predictor.parameters()
+                ]
+                max_grad += max(grads_norm)
+                torch.nn.utils.clip_grad_norm_(
+                    self._predictor.parameters(), self.clip_gradient_norm
+                )
+                self.optimizer_pred.step()
+
+            logger.info(
+                f'Epoch {i + 1}/{self.epochs_predictor}\t'
+                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Max accumulated gradient norm: {max_grad:1f}'
+            )
+            predictor_loss.append(np.float64(total_loss))
+            gradient_norm.append(np.float64(max_grad))
+
+        time_end_pred = time.time()
+        time_total_init = time_end_init - time_start_init
+        time_total_pred = time_end_pred - time_start_pred
+        logger.info(
+            f'Training time for initializer {time_total_init}s '
+            f'and for predictor {time_total_pred}s'
+        )
+
+        return dict(
+            index=np.asarray(i),
+            epoch_loss_initializer=np.asarray(initializer_loss),
+            epoch_loss_predictor=np.asarray(predictor_loss),
+            gradient_norm=np.asarray(gradient_norm),
+            training_time_initializer=np.asarray(time_total_init),
+            training_time_predictor=np.asarray(time_total_pred),
+        )
+
+    def simulate(
+        self,
+        initial_control: NDArray[np.float64],
+        initial_state: NDArray[np.float64],
+        control: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        if (
+            self.control_mean is None
+            or self.control_std is None
+            or self.state_mean is None
+            or self.state_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot simulate.')
+
+        self._initializer.eval()
+        self._predictor.eval()
+
+        initial_u = initial_control
+        initial_y = initial_state
+        u = control
+
+        initial_u = utils.normalize(initial_u, self.control_mean, self.control_std)
+        initial_y = utils.normalize(initial_y, self.state_mean, self.state_std)
+        u = utils.normalize(u, self.control_mean, self.control_std)
+
+        with torch.no_grad():
+            init_x = (
+                torch.from_numpy(np.hstack((initial_u[1:], initial_y[:-1])))
+                .unsqueeze(0)
+                .float()
+                .to(self.device)
+            )
+            pred_x = torch.from_numpy(u).unsqueeze(0).float().to(self.device)
+
+            _, hx = self._initializer.forward(init_x)
+            y, _ = self._predictor.forward(pred_x, hx=hx)
+            y_np: NDArray[np.float64] = (
+                y.cpu().detach().squeeze().numpy().astype(np.float64)
+            )
+
+        y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
+        return y_np
+
+    def simulate_inputforces_onestep(
+        self,
+        controls: NDArray[np.float64],
+        states: NDArray[np.float64],
+        forces: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        if (
+            self._state_mean is None
+            or self._state_std is None
+            or self._control_mean is None
+            or self._control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be simulated.')   
+
+        # self._inputnet.eval()
+        # self._diskretized_linear.eval()
+        self._predictor.eval()
+        self._initializer.eval()
+
+        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+        states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
+
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+
+        controls_ = torch.from_numpy(controls_).float().to(self.device)
+        states_ = torch.from_numpy(states).float().to(self.device)
+        forces_ = torch.from_numpy(forces).float().to(self.device)
+        states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
+
+        x0_control = controls_[:, :50, :]
+        x0_states_normed_ = states_normed_[:, :50, :]
+        x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
+
+        #the 49 incooperates the init of the diskretized linear 
+        #and we then drop the last state since, while we can compute
+        # the last next state we dont have meassurements there 
+        prev_cont_in = controls_[:, 49:, :]
+        lin_state_in = states_[:, 49:, :]
+        lin_forces_in = forces_[:, 49:, :]
+
+        #for the RNN we now need the values from 50 onward
+        curr_cont_in =controls_[:, 50:, :]
+
+        with torch.no_grad():
+            # prev_input_forces = self._inputnet.forward(prev_cont_in)
+
+            #drop last next state to fit with RNN inputs and because see previous comment
+            # states_next = self._diskretized_linear.forward(prev_input_forces,lin_state_in)[:,:-1,:]
+            # states_next_with_true_input_forces = self._diskretized_linear.forward(lin_forces_in,lin_state_in)[:,:-1,:]
+            
+            # curr_input_forces_ = self._inputnet.forward(curr_cont_in)
+            #mostly for better understanding of the timesteps
+            # outlin = self._diskretized_linear.calc_output(
+            #     states = states_next,
+            #     input_forces=curr_input_forces_
+            #     )
+            # true_input_pred_states_ = self._diskretized_linear.calc_output(
+            #     states = states_next_with_true_input_forces,
+            #     input_forces=curr_input_forces_
+            #     )
+
+            _, hx = self._initializer.forward(x0_init)
+            # out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            # rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
+            res_error, _ = self._predictor.forward(x_pred = curr_cont_in,hx=hx)
+            # res_error_denorm = utils.denormalize(res_error.to(self.device), _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            pred_states_ = res_error.to(self.device)#res_error_denorm.to(self.device)#outlin + res_error.to(self.device)
+
+            filler_forces_ = self._inputnet.forward(x0_control)
+
+        #fill the start that is used for initialisation with nans
+        filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
+        filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
+        pred_states = torch.concat((filler_nans_states,pred_states_),dim=1)
+        # true_input_pred_states = torch.concat((filler_nans_states,true_input_pred_states_),dim=1)
+        # curr_input_forces = torch.concat((filler_nans_cont,curr_input_forces_),dim=1)
+
+        return (pred_states.detach().cpu().numpy().astype(np.float64),
+                 pred_states.detach().cpu().numpy().astype(np.float64),
+                 pred_states.detach().cpu().numpy().astype(np.float64))
+
+
+    def save(self, file_path: Tuple[str, ...]) -> None:
+        if (
+            self.state_mean is None
+            or self.state_std is None
+            or self.control_mean is None
+            or self.control_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot be saved.')
+
+        torch.save(self._initializer.state_dict(), file_path[0])
+        torch.save(self._predictor.state_dict(), file_path[1])
+        with open(file_path[2], mode='w') as f:
+            json.dump(
+                {
+                    'state_mean': self.state_mean.tolist(),
+                    'state_std': self.state_std.tolist(),
+                    'control_mean': self.control_mean.tolist(),
+                    'control_std': self.control_std.tolist(),
+                },
+                f,
+            )
+
+    def load(self, file_path: Tuple[str, ...]) -> None:
+        self._initializer.load_state_dict(
+            torch.load(file_path[0], map_location=self.device_name)
+        )
+        self._predictor.load_state_dict(
+            torch.load(file_path[1], map_location=self.device_name)
+        )
+        with open(file_path[2], mode='r') as f:
+            norm = json.load(f)
+        self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
+        self._state_std = np.array(norm['state_std'], dtype=np.float64)
+        self._control_mean = np.array(norm['control_mean'], dtype=np.float64)
+        self._control_std = np.array(norm['control_std'], dtype=np.float64)
+
+    def get_file_extension(self) -> Tuple[str, ...]:
+        return 'initializer.pth', 'predictor.pth', 'json'
+
+    def get_parameter_count(self) -> int:
+        # technically parameter counts of both networks are equal
+        init_count = sum(
+            p.numel() for p in self._initializer.parameters() if p.requires_grad
+        )
+        predictor_count = sum(
+            p.numel() for p in self._predictor.parameters() if p.requires_grad
+        )
+        return init_count + predictor_count
+
+    @property
+    def initializer(self) -> HiddenStateForwardModule:
+        return copy.deepcopy(self._initializer)
+
+    @property
+    def predictor(self) -> HiddenStateForwardModule:
+        return copy.deepcopy(self._predictor)
