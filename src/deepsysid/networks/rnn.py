@@ -381,6 +381,40 @@ class LtiRnnConvConstr(HiddenStateForwardModule):
 
         return y, (x, x)
 
+    def forward_alt(
+        self,
+        x_pred: torch.Tensor,
+        device: Optional[str] = "cpu",
+        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        n_batch, n_sample, _ = x_pred.shape
+
+        #Add constant input as alternative Bias term
+        # (needs to be considered in initialisation)
+        x_pred = torch.cat((x_pred, torch.ones((n_batch, n_sample, 1), device=device)), dim=-1)
+
+
+
+        Y_inv = self.Y.inverse()
+        T_inv = torch.diag(1 / torch.squeeze(self.lambdas))
+        # initialize output
+        y = torch.zeros((n_batch, n_sample, self.ny),device=device)
+
+        if hx is not None:
+            x = hx[0][1]
+        else:
+            x = torch.zeros((n_batch, self.nx),device=device)
+
+        for k in range(n_sample):
+            z = (self.C2_tilde(x) + self.D21_tilde(x_pred[:, k, :]) + self.b_z) @ T_inv
+            w = self.nl(z)
+            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w) + self.b_y
+            x = (
+                self.A_tilde(x) + self.B1_tilde(x_pred[:, k, :]) + self.B2_tilde(w)
+            ) @ Y_inv
+
+        return y, (x, x)
+
     def get_constraints(self) -> torch.Tensor:
         # state sizes
         nx = self.nx
