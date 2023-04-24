@@ -142,13 +142,6 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, NDArray[np.flo
 
                 x0[idx, :, :] = np.hstack(
                     (
-                        control[time : time + self.sequence_length],
-                        state[time : time + self.sequence_length, :],
-                    )
-                )
-                #TODO: sanity check
-                x0_[idx, :, :] = np.hstack(
-                    (
                         control[time : time + self.sequence_length, :],
                         state[time : time + self.sequence_length, :],
                     )
