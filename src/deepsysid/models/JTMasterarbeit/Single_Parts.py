@@ -2565,8 +2565,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         with torch.no_grad():
             #TODO: does it take only one? and the right one?
-            last_init_cont = controls_[:, 49:49, :].float().to(self.device)
-            last_init_state = states_[:, 49:49, :].float().to(self.device)
+            last_init_cont = controls_[:, 49:50, :].float().to(self.device)
+            last_init_state = states_[:, 49:50, :].float().to(self.device)
             
             init_input_lin_ = self._inputnet.forward(last_init_cont)
             last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
