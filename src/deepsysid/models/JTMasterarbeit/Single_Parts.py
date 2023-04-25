@@ -1721,6 +1721,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #################################
         self._inputnet.eval()
 
+        #break training loop if constraint is failed 
+        # (will then fall back to last validation checkpoint)
+        stop_train = False
+
         #validation
         predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
             us_vali,
@@ -2131,6 +2135,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         time_total_init = time_end_init - time_start_init
                         time_total_pred = time_end_pred - time_start_pred
 
+                        #Trainings that ended here seemed to result in worse models,
+                        # also it circumvents the validation so it wont check if an earlier
+                        # epoch was better => let it break the training here  
+                        stop_train = True
+                        break
+
                         return dict(
                             index=np.asarray(i),
                             epoch_loss_initializer=np.asarray(initializer_loss),
@@ -2157,6 +2167,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         )
                     bls_iter += 1
 
+                if stop_train:
+                    break
+            if stop_train:
+                break
             ########################### 
             #main validation check for overfitt prevention
             #################################
@@ -2301,29 +2315,29 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             f'and for predictor {time_total_pred}s'
         )
 
+        #with validation
         return dict(
             index=np.asarray(i),
-            epoch_loss_initializer=np.asarray(initializer_loss),
-            epoch_loss_predictor=np.asarray(predictor_loss),
-            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
             inputfnn_losses=np.asarray(inputfnn_losses),
+            inputfnn_val_loss=np.array(inputfnn_validation_losses, dtype=np.float64), 
+            inputfnn_best_epoch = inputfnn_best_epoch, 
+            inputfnn_best_val_loss = inputfnn_best_val_loss.item(),
+            epoch_loss_initializer=np.asarray(initializer_loss),
+            training_time_initializer=np.asarray(time_total_init),
+            epoch_loss_predictor=np.asarray(predictor_loss),
+            predictor_val_loss=np.array(predictor_validation_losses, dtype=np.float64), 
+            predictor_best_epoch = predictor_best_epoch, 
+            predictor_best_val_loss = predictor_best_val_loss.item(),
+            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+            predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64),
+            predictor_multistep_best_epoch = predictor_multistep_best_epoch,  
+            predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
+            training_time_predictor=np.asarray(time_total_pred),
             barrier_value=np.asarray(barrier_value),
             backtracking_iter=np.asarray(backtracking_iter),
             gradient_norm=np.asarray(gradient_norm),
             max_eigenvalue=np.asarray(max_eigenvalue),
             min_eigenvalue=np.asarray(min_eigenvalue),
-            training_time_initializer=np.asarray(time_total_init),
-            training_time_predictor=np.asarray(time_total_pred),
-            #validation
-            inputfnn_val_loss=np.array(inputfnn_validation_losses, dtype=np.float64), 
-            inputfnn_best_epoch = inputfnn_best_epoch, 
-            inputfnn_best_val_loss = inputfnn_best_val_loss.item(),
-            predictor_val_loss=np.array(predictor_validation_losses, dtype=np.float64), 
-            predictor_best_epoch = predictor_best_epoch, 
-            predictor_best_val_loss = predictor_best_val_loss.item(),
-            predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64), 
-            predictor_multistep_best_epoch = predictor_multistep_best_epoch, 
-            predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
         )
 
 
@@ -2720,6 +2734,35 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 #     epochs_predictor: int
 #     clip_gradient_norm: float
 #     loss: Literal['mse', 'msge']
+
+#Put this into configuration file
+
+# ,
+#       {
+#         "model_base_name": "PlainLtiRnn",
+#         "model_class": "deepsysid.models.JTMasterarbeit.Single_Parts.PlainLtiRnn",
+#         "static_parameters": {
+#           "num_recurrent_layers_init": 2,
+#           "loss": "mse",
+#           "time_delta": 1.0,
+#           "dropout": 0.25,
+#           "sequence_length": 50,
+#           "batch_size": 128,
+#           "epochs_initializer": 400,
+#           "epochs_predictor": 1000,
+#           "nx": 64,
+#           "learning_rate": 0.0025,
+#           "clip_gradient_norm":  100
+#         },
+#         "flexible_parameters": {
+#           "recurrent_dim": [
+#             64,
+#             128,
+#             192,
+#             256
+#           ]
+#         }
+#       }
 
 
 # class PlainLtiRnn(base.NormalizedHiddenStateInitializerPredictorModel):
