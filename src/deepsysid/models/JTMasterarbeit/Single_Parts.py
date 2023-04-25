@@ -2410,8 +2410,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                outputs.append(corr_state)
                 corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
+                outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
                     input_forces=in_lin.unsqueeze(0),
@@ -2527,7 +2527,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                  pred_states.detach().cpu().numpy().astype(np.float64),
                  true_input_pred_states.detach().cpu().numpy().astype(np.float64))
 
-#TODO: this
+
     def simulate_inputforces_multistep(
         self,
         controls: NDArray[np.float64],
@@ -2622,18 +2622,14 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                outputs.append(corr_state)
                 corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
+                outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
                     input_forces=in_lin_,
                     states=corr_state_denorm,
                     )
             outputs_tensor = torch.cat(outputs, dim=1)
-
-
-
-
 
         #fill the start that is used for initialisation with nans
         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
@@ -2712,357 +2708,357 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
 
 #mostly just copy pasted but with my own simulate for a better comparison
-class PlainLtiRnnConfig(DynamicIdentificationModelConfig):
-    nx: int
-    recurrent_dim: int
-    num_recurrent_layers_init: int
-    dropout: float
-    sequence_length: int
-    learning_rate: float
-    batch_size: int
-    epochs_initializer: int
-    epochs_predictor: int
-    clip_gradient_norm: float
-    loss: Literal['mse', 'msge']
+# class PlainLtiRnnConfig(DynamicIdentificationModelConfig):
+#     nx: int
+#     recurrent_dim: int
+#     num_recurrent_layers_init: int
+#     dropout: float
+#     sequence_length: int
+#     learning_rate: float
+#     batch_size: int
+#     epochs_initializer: int
+#     epochs_predictor: int
+#     clip_gradient_norm: float
+#     loss: Literal['mse', 'msge']
 
 
-class PlainLtiRnn(base.NormalizedHiddenStateInitializerPredictorModel):
-    CONFIG = PlainLtiRnnConfig
+# class PlainLtiRnn(base.NormalizedHiddenStateInitializerPredictorModel):
+#     CONFIG = PlainLtiRnnConfig
 
-    def __init__(self, config: PlainLtiRnnConfig):
-        super().__init__(config)
+#     def __init__(self, config: PlainLtiRnnConfig):
+#         super().__init__(config)
 
-        self.device_name = config.device_name
-        self.device = torch.device(self.device_name)
+#         self.device_name = config.device_name
+#         self.device = torch.device(self.device_name)
 
-        self.nx = config.nx
-        self.control_dim = len(config.control_names)
-        self.state_dim = len(config.state_names)
-        self.recurrent_dim = config.recurrent_dim
+#         self.nx = config.nx
+#         self.control_dim = len(config.control_names)
+#         self.state_dim = len(config.state_names)
+#         self.recurrent_dim = config.recurrent_dim
 
-        self.recurrent_dim = config.recurrent_dim
-        self.num_recurrent_layers_init = config.num_recurrent_layers_init
-        self.dropout = config.dropout
+#         self.recurrent_dim = config.recurrent_dim
+#         self.num_recurrent_layers_init = config.num_recurrent_layers_init
+#         self.dropout = config.dropout
 
-        self.sequence_length = config.sequence_length
-        self.learning_rate = config.learning_rate
-        self.batch_size = config.batch_size
-        self.epochs_initializer = config.epochs_initializer
-        self.epochs_predictor = config.epochs_predictor
+#         self.sequence_length = config.sequence_length
+#         self.learning_rate = config.learning_rate
+#         self.batch_size = config.batch_size
+#         self.epochs_initializer = config.epochs_initializer
+#         self.epochs_predictor = config.epochs_predictor
 
-        self.clip_gradient_norm = config.clip_gradient_norm
+#         self.clip_gradient_norm = config.clip_gradient_norm
 
-        if config.loss == 'mse':
-            self.loss: nn.Module = nn.MSELoss().to(self.device)
-        elif config.loss == 'msge':
-            self.loss = loss.MSGELoss().to(self.device)
-        else:
-            raise ValueError('loss can only be "mse" or "msge"')
+#         if config.loss == 'mse':
+#             self.loss: nn.Module = nn.MSELoss().to(self.device)
+#         elif config.loss == 'msge':
+#             self.loss = loss.MSGELoss().to(self.device)
+#         else:
+#             raise ValueError('loss can only be "mse" or "msge"')
 
-        self._predictor = rnn.LtiRnn(
-            nx=self.nx,
-            nu=self.control_dim,
-            ny=self.state_dim,
-            nw=self.recurrent_dim,
-        ).to(self.device)
+#         self._predictor = rnn.LtiRnn(
+#             nx=self.nx,
+#             nu=self.control_dim,
+#             ny=self.state_dim,
+#             nw=self.recurrent_dim,
+#         ).to(self.device)
 
-        self._initializer = rnn.BasicLSTM(
-            input_dim=self.control_dim + self.state_dim,
-            recurrent_dim=self.nx,
-            num_recurrent_layers=self.num_recurrent_layers_init,
-            output_dim=[self.state_dim],
-            dropout=self.dropout,
-        ).to(self.device)
+#         self._initializer = rnn.BasicLSTM(
+#             input_dim=self.control_dim + self.state_dim,
+#             recurrent_dim=self.nx,
+#             num_recurrent_layers=self.num_recurrent_layers_init,
+#             output_dim=[self.state_dim],
+#             dropout=self.dropout,
+#         ).to(self.device)
 
-        self.optimizer_pred = optim.Adam(
-            self._predictor.parameters(), lr=self.learning_rate
-        )
-        self.optimizer_init = optim.Adam(
-            self._initializer.parameters(), lr=self.learning_rate
-        )
+#         self.optimizer_pred = optim.Adam(
+#             self._predictor.parameters(), lr=self.learning_rate
+#         )
+#         self.optimizer_init = optim.Adam(
+#             self._initializer.parameters(), lr=self.learning_rate
+#         )
 
-    def train(
-        self,
-        control_seqs: List[NDArray[np.float64]],
-        state_seqs: List[NDArray[np.float64]],
-    ) -> Dict[str, NDArray[np.float64]]:
-        us = control_seqs
-        ys = state_seqs
+#     def train(
+#         self,
+#         control_seqs: List[NDArray[np.float64]],
+#         state_seqs: List[NDArray[np.float64]],
+#     ) -> Dict[str, NDArray[np.float64]]:
+#         us = control_seqs
+#         ys = state_seqs
 
-        self._predictor.train()
-        self._initializer.train()
+#         self._predictor.train()
+#         self._initializer.train()
 
-        self._control_mean, self._control_std = utils.mean_stddev(us)
-        self._state_mean, self._state_std = utils.mean_stddev(ys)
+#         self._control_mean, self._control_std = utils.mean_stddev(us)
+#         self._state_mean, self._state_std = utils.mean_stddev(ys)
 
-        us = [
-            utils.normalize(control, self.control_mean, self.control_std)
-            for control in us
-        ]
-        ys = [utils.normalize(state, self.state_mean, self.state_std) for state in ys]
+#         us = [
+#             utils.normalize(control, self.control_mean, self.control_std)
+#             for control in us
+#         ]
+#         ys = [utils.normalize(state, self.state_mean, self.state_std) for state in ys]
 
-        initializer_dataset = RecurrentInitializerDataset(us, ys, self.sequence_length)
+#         initializer_dataset = RecurrentInitializerDataset(us, ys, self.sequence_length)
 
-        initializer_loss = []
-        time_start_init = time.time()
-        for i in range(self.epochs_initializer):
-            data_loader = data.DataLoader(
-                initializer_dataset, self.batch_size, shuffle=True, drop_last=True
-            )
-            total_loss = 0.0
-            for batch_idx, batch in enumerate(data_loader):
-                self._initializer.zero_grad()
-                y, _ = self._initializer.forward(batch['x'].float().to(self.device))
-                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
-                total_loss += batch_loss.item()
-                batch_loss.backward()
-                self.optimizer_init.step()
+#         initializer_loss = []
+#         time_start_init = time.time()
+#         for i in range(self.epochs_initializer):
+#             data_loader = data.DataLoader(
+#                 initializer_dataset, self.batch_size, shuffle=True, drop_last=True
+#             )
+#             total_loss = 0.0
+#             for batch_idx, batch in enumerate(data_loader):
+#                 self._initializer.zero_grad()
+#                 y, _ = self._initializer.forward(batch['x'].float().to(self.device))
+#                 batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+#                 total_loss += batch_loss.item()
+#                 batch_loss.backward()
+#                 self.optimizer_init.step()
 
-            logger.info(
-                f'Epoch {i + 1}/{self.epochs_initializer}\t'
-                f'Epoch Loss (Initializer): {total_loss}'
-            )
-            initializer_loss.append(total_loss)
-        time_end_init = time.time()
+#             logger.info(
+#                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
+#                 f'Epoch Loss (Initializer): {total_loss}'
+#             )
+#             initializer_loss.append(total_loss)
+#         time_end_init = time.time()
 
-        predictor_dataset = RecurrentPredictorDataset(us, ys, self.sequence_length)
+#         predictor_dataset = RecurrentPredictorDataset(us, ys, self.sequence_length)
 
-        time_start_pred = time.time()
-        predictor_loss: List[np.float64] = []
-        gradient_norm: List[np.float64] = []
-        for i in range(self.epochs_predictor):
-            data_loader = data.DataLoader(
-                predictor_dataset, self.batch_size, shuffle=True, drop_last=True
-            )
-            total_loss = 0
-            max_grad = 0
-            for batch_idx, batch in enumerate(data_loader):
-                self._predictor.zero_grad()
-                # Initialize predictor with state of initializer network
-                _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
-                # Predict and optimize
-                y, _ = self._predictor.forward(
-                    batch['x'].float().to(self.device), hx=hx
-                )
-                y = y.to(self.device)
-                batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
-                total_loss += batch_loss.item()
-                batch_loss.backward()
+#         time_start_pred = time.time()
+#         predictor_loss: List[np.float64] = []
+#         gradient_norm: List[np.float64] = []
+#         for i in range(self.epochs_predictor):
+#             data_loader = data.DataLoader(
+#                 predictor_dataset, self.batch_size, shuffle=True, drop_last=True
+#             )
+#             total_loss = 0
+#             max_grad = 0
+#             for batch_idx, batch in enumerate(data_loader):
+#                 self._predictor.zero_grad()
+#                 # Initialize predictor with state of initializer network
+#                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
+#                 # Predict and optimize
+#                 y, _ = self._predictor.forward(
+#                     batch['x'].float().to(self.device), hx=hx
+#                 )
+#                 y = y.to(self.device)
+#                 batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
+#                 total_loss += batch_loss.item()
+#                 batch_loss.backward()
 
-                # gradient infos
-                grads_norm = [
-                    torch.linalg.norm(p.grad) for p in self._predictor.parameters()
-                ]
-                max_grad += max(grads_norm)
-                torch.nn.utils.clip_grad_norm_(
-                    self._predictor.parameters(), self.clip_gradient_norm
-                )
-                self.optimizer_pred.step()
+#                 # gradient infos
+#                 grads_norm = [
+#                     torch.linalg.norm(p.grad) for p in self._predictor.parameters()
+#                 ]
+#                 max_grad += max(grads_norm)
+#                 torch.nn.utils.clip_grad_norm_(
+#                     self._predictor.parameters(), self.clip_gradient_norm
+#                 )
+#                 self.optimizer_pred.step()
 
-            logger.info(
-                f'Epoch {i + 1}/{self.epochs_predictor}\t'
-                f'Total Loss (Predictor): {total_loss:1f} \t'
-                f'Max accumulated gradient norm: {max_grad:1f}'
-            )
-            predictor_loss.append(np.float64(total_loss))
-            gradient_norm.append(np.float64(max_grad))
+#             logger.info(
+#                 f'Epoch {i + 1}/{self.epochs_predictor}\t'
+#                 f'Total Loss (Predictor): {total_loss:1f} \t'
+#                 f'Max accumulated gradient norm: {max_grad:1f}'
+#             )
+#             predictor_loss.append(np.float64(total_loss))
+#             gradient_norm.append(np.float64(max_grad))
 
-        time_end_pred = time.time()
-        time_total_init = time_end_init - time_start_init
-        time_total_pred = time_end_pred - time_start_pred
-        logger.info(
-            f'Training time for initializer {time_total_init}s '
-            f'and for predictor {time_total_pred}s'
-        )
+#         time_end_pred = time.time()
+#         time_total_init = time_end_init - time_start_init
+#         time_total_pred = time_end_pred - time_start_pred
+#         logger.info(
+#             f'Training time for initializer {time_total_init}s '
+#             f'and for predictor {time_total_pred}s'
+#         )
 
-        return dict(
-            index=np.asarray(i),
-            epoch_loss_initializer=np.asarray(initializer_loss),
-            epoch_loss_predictor=np.asarray(predictor_loss),
-            gradient_norm=np.asarray(gradient_norm),
-            training_time_initializer=np.asarray(time_total_init),
-            training_time_predictor=np.asarray(time_total_pred),
-        )
+#         return dict(
+#             index=np.asarray(i),
+#             epoch_loss_initializer=np.asarray(initializer_loss),
+#             epoch_loss_predictor=np.asarray(predictor_loss),
+#             gradient_norm=np.asarray(gradient_norm),
+#             training_time_initializer=np.asarray(time_total_init),
+#             training_time_predictor=np.asarray(time_total_pred),
+#         )
 
-    def simulate(
-        self,
-        initial_control: NDArray[np.float64],
-        initial_state: NDArray[np.float64],
-        control: NDArray[np.float64],
-    ) -> NDArray[np.float64]:
-        if (
-            self.control_mean is None
-            or self.control_std is None
-            or self.state_mean is None
-            or self.state_std is None
-        ):
-            raise ValueError('Model has not been trained and cannot simulate.')
+#     def simulate(
+#         self,
+#         initial_control: NDArray[np.float64],
+#         initial_state: NDArray[np.float64],
+#         control: NDArray[np.float64],
+#     ) -> NDArray[np.float64]:
+#         if (
+#             self.control_mean is None
+#             or self.control_std is None
+#             or self.state_mean is None
+#             or self.state_std is None
+#         ):
+#             raise ValueError('Model has not been trained and cannot simulate.')
 
-        self._initializer.eval()
-        self._predictor.eval()
+#         self._initializer.eval()
+#         self._predictor.eval()
 
-        initial_u = initial_control
-        initial_y = initial_state
-        u = control
+#         initial_u = initial_control
+#         initial_y = initial_state
+#         u = control
 
-        initial_u = utils.normalize(initial_u, self.control_mean, self.control_std)
-        initial_y = utils.normalize(initial_y, self.state_mean, self.state_std)
-        u = utils.normalize(u, self.control_mean, self.control_std)
+#         initial_u = utils.normalize(initial_u, self.control_mean, self.control_std)
+#         initial_y = utils.normalize(initial_y, self.state_mean, self.state_std)
+#         u = utils.normalize(u, self.control_mean, self.control_std)
 
-        with torch.no_grad():
-            init_x = (
-                torch.from_numpy(np.hstack((initial_u[1:], initial_y[:-1])))
-                .unsqueeze(0)
-                .float()
-                .to(self.device)
-            )
-            pred_x = torch.from_numpy(u).unsqueeze(0).float().to(self.device)
+#         with torch.no_grad():
+#             init_x = (
+#                 torch.from_numpy(np.hstack((initial_u[1:], initial_y[:-1])))
+#                 .unsqueeze(0)
+#                 .float()
+#                 .to(self.device)
+#             )
+#             pred_x = torch.from_numpy(u).unsqueeze(0).float().to(self.device)
 
-            _, hx = self._initializer.forward(init_x)
-            y, _ = self._predictor.forward(pred_x, hx=hx)
-            y_np: NDArray[np.float64] = (
-                y.cpu().detach().squeeze().numpy().astype(np.float64)
-            )
+#             _, hx = self._initializer.forward(init_x)
+#             y, _ = self._predictor.forward(pred_x, hx=hx)
+#             y_np: NDArray[np.float64] = (
+#                 y.cpu().detach().squeeze().numpy().astype(np.float64)
+#             )
 
-        y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
-        return y_np
+#         y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
+#         return y_np
 
-    def simulate_inputforces_onestep(
-        self,
-        controls: NDArray[np.float64],
-        states: NDArray[np.float64],
-        forces: NDArray[np.float64],
-    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-        if (
-            self._state_mean is None
-            or self._state_std is None
-            or self._control_mean is None
-            or self._control_std is None
-        ):
-            raise ValueError('Model has not been trained and cannot be simulated.')   
+#     def simulate_inputforces_onestep(
+#         self,
+#         controls: NDArray[np.float64],
+#         states: NDArray[np.float64],
+#         forces: NDArray[np.float64],
+#     ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+#         if (
+#             self._state_mean is None
+#             or self._state_std is None
+#             or self._control_mean is None
+#             or self._control_std is None
+#         ):
+#             raise ValueError('Model has not been trained and cannot be simulated.')   
 
-        # self._inputnet.eval()
-        # self._diskretized_linear.eval()
-        self._predictor.eval()
-        self._initializer.eval()
+#         # self._inputnet.eval()
+#         # self._diskretized_linear.eval()
+#         self._predictor.eval()
+#         self._initializer.eval()
 
-        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
-        states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
+#         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+#         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+#         # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+#         # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
 
-        controls_ = torch.from_numpy(controls_).float().to(self.device)
-        states_ = torch.from_numpy(states).float().to(self.device)
-        forces_ = torch.from_numpy(forces).float().to(self.device)
-        states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
+#         controls_ = torch.from_numpy(controls_).float().to(self.device)
+#         states_ = torch.from_numpy(states).float().to(self.device)
+#         forces_ = torch.from_numpy(forces).float().to(self.device)
+#         states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
 
-        x0_control = controls_[:, :50, :]
-        x0_states_normed_ = states_normed_[:, :50, :]
-        x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
+#         x0_control = controls_[:, :50, :]
+#         x0_states_normed_ = states_normed_[:, :50, :]
+#         x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
 
-        #the 49 incooperates the init of the diskretized linear 
-        #and we then drop the last state since, while we can compute
-        # the last next state we dont have meassurements there 
-        prev_cont_in = controls_[:, 49:, :]
-        lin_state_in = states_[:, 49:, :]
-        lin_forces_in = forces_[:, 49:, :]
+#         #the 49 incooperates the init of the diskretized linear 
+#         #and we then drop the last state since, while we can compute
+#         # the last next state we dont have meassurements there 
+#         prev_cont_in = controls_[:, 49:, :]
+#         lin_state_in = states_[:, 49:, :]
+#         lin_forces_in = forces_[:, 49:, :]
 
-        #for the RNN we now need the values from 50 onward
-        curr_cont_in =controls_[:, 50:, :]
+#         #for the RNN we now need the values from 50 onward
+#         curr_cont_in =controls_[:, 50:, :]
 
-        with torch.no_grad():
-            # prev_input_forces = self._inputnet.forward(prev_cont_in)
+#         with torch.no_grad():
+#             # prev_input_forces = self._inputnet.forward(prev_cont_in)
 
-            #drop last next state to fit with RNN inputs and because see previous comment
-            # states_next = self._diskretized_linear.forward(prev_input_forces,lin_state_in)[:,:-1,:]
-            # states_next_with_true_input_forces = self._diskretized_linear.forward(lin_forces_in,lin_state_in)[:,:-1,:]
+#             #drop last next state to fit with RNN inputs and because see previous comment
+#             # states_next = self._diskretized_linear.forward(prev_input_forces,lin_state_in)[:,:-1,:]
+#             # states_next_with_true_input_forces = self._diskretized_linear.forward(lin_forces_in,lin_state_in)[:,:-1,:]
             
-            # curr_input_forces_ = self._inputnet.forward(curr_cont_in)
-            #mostly for better understanding of the timesteps
-            # outlin = self._diskretized_linear.calc_output(
-            #     states = states_next,
-            #     input_forces=curr_input_forces_
-            #     )
-            # true_input_pred_states_ = self._diskretized_linear.calc_output(
-            #     states = states_next_with_true_input_forces,
-            #     input_forces=curr_input_forces_
-            #     )
+#             # curr_input_forces_ = self._inputnet.forward(curr_cont_in)
+#             #mostly for better understanding of the timesteps
+#             # outlin = self._diskretized_linear.calc_output(
+#             #     states = states_next,
+#             #     input_forces=curr_input_forces_
+#             #     )
+#             # true_input_pred_states_ = self._diskretized_linear.calc_output(
+#             #     states = states_next_with_true_input_forces,
+#             #     input_forces=curr_input_forces_
+#             #     )
 
-            _, hx = self._initializer.forward(x0_init)
-            # out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-            # rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
-            res_error, _ = self._predictor.forward(x_pred = curr_cont_in,hx=hx)
-            # res_error_denorm = utils.denormalize(res_error.to(self.device), _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-            pred_states_ = res_error.to(self.device)#res_error_denorm.to(self.device)#outlin + res_error.to(self.device)
+#             _, hx = self._initializer.forward(x0_init)
+#             # out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+#             # rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
+#             res_error, _ = self._predictor.forward(x_pred = curr_cont_in,hx=hx)
+#             # res_error_denorm = utils.denormalize(res_error.to(self.device), _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+#             pred_states_ = res_error.to(self.device)#res_error_denorm.to(self.device)#outlin + res_error.to(self.device)
 
-            filler_forces_ = self._inputnet.forward(x0_control)
+#             filler_forces_ = self._inputnet.forward(x0_control)
 
-        #fill the start that is used for initialisation with nans
-        filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
-        filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
-        pred_states = torch.concat((filler_nans_states,pred_states_),dim=1)
-        # true_input_pred_states = torch.concat((filler_nans_states,true_input_pred_states_),dim=1)
-        # curr_input_forces = torch.concat((filler_nans_cont,curr_input_forces_),dim=1)
+#         #fill the start that is used for initialisation with nans
+#         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
+#         filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
+#         pred_states = torch.concat((filler_nans_states,pred_states_),dim=1)
+#         # true_input_pred_states = torch.concat((filler_nans_states,true_input_pred_states_),dim=1)
+#         # curr_input_forces = torch.concat((filler_nans_cont,curr_input_forces_),dim=1)
 
-        return (pred_states.detach().cpu().numpy().astype(np.float64),
-                 pred_states.detach().cpu().numpy().astype(np.float64),
-                 pred_states.detach().cpu().numpy().astype(np.float64))
+#         return (pred_states.detach().cpu().numpy().astype(np.float64),
+#                  pred_states.detach().cpu().numpy().astype(np.float64),
+#                  pred_states.detach().cpu().numpy().astype(np.float64))
 
 
-    def save(self, file_path: Tuple[str, ...]) -> None:
-        if (
-            self.state_mean is None
-            or self.state_std is None
-            or self.control_mean is None
-            or self.control_std is None
-        ):
-            raise ValueError('Model has not been trained and cannot be saved.')
+#     def save(self, file_path: Tuple[str, ...]) -> None:
+#         if (
+#             self.state_mean is None
+#             or self.state_std is None
+#             or self.control_mean is None
+#             or self.control_std is None
+#         ):
+#             raise ValueError('Model has not been trained and cannot be saved.')
 
-        torch.save(self._initializer.state_dict(), file_path[0])
-        torch.save(self._predictor.state_dict(), file_path[1])
-        with open(file_path[2], mode='w') as f:
-            json.dump(
-                {
-                    'state_mean': self.state_mean.tolist(),
-                    'state_std': self.state_std.tolist(),
-                    'control_mean': self.control_mean.tolist(),
-                    'control_std': self.control_std.tolist(),
-                },
-                f,
-            )
+#         torch.save(self._initializer.state_dict(), file_path[0])
+#         torch.save(self._predictor.state_dict(), file_path[1])
+#         with open(file_path[2], mode='w') as f:
+#             json.dump(
+#                 {
+#                     'state_mean': self.state_mean.tolist(),
+#                     'state_std': self.state_std.tolist(),
+#                     'control_mean': self.control_mean.tolist(),
+#                     'control_std': self.control_std.tolist(),
+#                 },
+#                 f,
+#             )
 
-    def load(self, file_path: Tuple[str, ...]) -> None:
-        self._initializer.load_state_dict(
-            torch.load(file_path[0], map_location=self.device_name)
-        )
-        self._predictor.load_state_dict(
-            torch.load(file_path[1], map_location=self.device_name)
-        )
-        with open(file_path[2], mode='r') as f:
-            norm = json.load(f)
-        self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
-        self._state_std = np.array(norm['state_std'], dtype=np.float64)
-        self._control_mean = np.array(norm['control_mean'], dtype=np.float64)
-        self._control_std = np.array(norm['control_std'], dtype=np.float64)
+#     def load(self, file_path: Tuple[str, ...]) -> None:
+#         self._initializer.load_state_dict(
+#             torch.load(file_path[0], map_location=self.device_name)
+#         )
+#         self._predictor.load_state_dict(
+#             torch.load(file_path[1], map_location=self.device_name)
+#         )
+#         with open(file_path[2], mode='r') as f:
+#             norm = json.load(f)
+#         self._state_mean = np.array(norm['state_mean'], dtype=np.float64)
+#         self._state_std = np.array(norm['state_std'], dtype=np.float64)
+#         self._control_mean = np.array(norm['control_mean'], dtype=np.float64)
+#         self._control_std = np.array(norm['control_std'], dtype=np.float64)
 
-    def get_file_extension(self) -> Tuple[str, ...]:
-        return 'initializer.pth', 'predictor.pth', 'json'
+#     def get_file_extension(self) -> Tuple[str, ...]:
+#         return 'initializer.pth', 'predictor.pth', 'json'
 
-    def get_parameter_count(self) -> int:
-        # technically parameter counts of both networks are equal
-        init_count = sum(
-            p.numel() for p in self._initializer.parameters() if p.requires_grad
-        )
-        predictor_count = sum(
-            p.numel() for p in self._predictor.parameters() if p.requires_grad
-        )
-        return init_count + predictor_count
+#     def get_parameter_count(self) -> int:
+#         # technically parameter counts of both networks are equal
+#         init_count = sum(
+#             p.numel() for p in self._initializer.parameters() if p.requires_grad
+#         )
+#         predictor_count = sum(
+#             p.numel() for p in self._predictor.parameters() if p.requires_grad
+#         )
+#         return init_count + predictor_count
 
-    @property
-    def initializer(self) -> HiddenStateForwardModule:
-        return copy.deepcopy(self._initializer)
+#     @property
+#     def initializer(self) -> HiddenStateForwardModule:
+#         return copy.deepcopy(self._initializer)
 
-    @property
-    def predictor(self) -> HiddenStateForwardModule:
-        return copy.deepcopy(self._predictor)
+#     @property
+#     def predictor(self) -> HiddenStateForwardModule:
+#         return copy.deepcopy(self._predictor)
