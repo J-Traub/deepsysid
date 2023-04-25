@@ -2563,6 +2563,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         x0_states_normed_ = states_normed_[:, :50, :]
         x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
 
+        control_ = controls_[:, 50:,:]
+
         with torch.no_grad():
             #TODO: does it take only one? and the right one?
             last_init_cont = controls_[:, 49:50, :].float().to(self.device)
