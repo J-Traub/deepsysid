@@ -1000,15 +1000,15 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             self._inputnet.parameters(), lr=self.learning_rate
         )
         if self.RNNinputnetbool:
-            self.optimizer_pred = optim.Adam(
-                self._predictor.parameters(), lr=self.learning_rate
-            )
-        else:
             #learning rate could be made different between the two
             self.optimizer_pred = optim.Adam([
                 {'params': self._inputRNNnet.parameters(), 'lr': self.learning_rate},
                 {'params': self._predictor.parameters(), 'lr': self.learning_rate}
             ])
+        else:
+            self.optimizer_pred = optim.Adam(
+                self._predictor.parameters(), lr=self.learning_rate
+            )
         
         self.optimizer_init = optim.Adam(
             self._initializer.parameters(), lr=self.learning_rate
@@ -1303,15 +1303,15 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 
         if self.RNNinputnetbool:
-            self.optimizer_pred_multistep = optim.Adam(
-                self._predictor.parameters(), lr=self.learning_rate
-            )
-        else:
             #learning rate could be made different between the two
             self.optimizer_pred_multistep = optim.Adam([
                 {'params': self._inputRNNnet.parameters(), 'lr': self.learning_rate},
                 {'params': self._predictor.parameters(), 'lr': self.learning_rate}
             ])
+        else:
+            self.optimizer_pred_multistep = optim.Adam(
+                self._predictor.parameters(), lr=self.learning_rate
+            )
 
         time_start_pred = time.time()
         t = self.initial_decay_parameter
@@ -1390,8 +1390,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
                 true_state = batch['states'].float().to(self.device)
-                # test1 =outputs_tensor
-                # test2 =true_state
+                # test1 = outputs_tensor
+                # test2 = true_state
                 batch_loss = self.loss.forward(outputs_tensor, true_state)
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
@@ -1863,10 +1863,18 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         time_total_init = time_end_init - time_start_init
                         time_total_pred = time_end_pred - time_start_pred
 
-                        raise ValueError(
-                            "Error: Model did not complete Teacher Forcing training phase. \n"
-                            "Adjust gamma, initial decay, decay rate or singlestep epochs.")
+                        #Trainings that ended here seemed to result in worse models,
+                        # also it circumvents the validation so it wont check if an earlier
+                        # epoch was better => let it break the training here  
+                        stop_train = True
+                        break
+
                     bls_iter += 1
+
+                if stop_train:
+                    break
+            if stop_train:
+                break
 
             ########################### 
             #main validation check for overfitt prevention
@@ -1984,15 +1992,16 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 
         #reset optimizer
         if self.RNNinputnetbool:
-            self.optimizer_pred_multistep = optim.Adam(
-                self._predictor.parameters(), lr=self.learning_rate
-            )
-        else:
             #learning rate could be made different between the two
             self.optimizer_pred_multistep = optim.Adam([
                 {'params': self._inputRNNnet.parameters(), 'lr': self.learning_rate},
                 {'params': self._predictor.parameters(), 'lr': self.learning_rate}
             ])
+        else:
+            self.optimizer_pred_multistep = optim.Adam(
+                self._predictor.parameters(), lr=self.learning_rate
+            )
+
 
         time_start_pred = time.time()
         t = self.initial_decay_parameter
@@ -2424,7 +2433,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
+                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
                 outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
@@ -2438,7 +2447,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 outputs_tensor.cpu().detach().squeeze().numpy().astype(np.float64)
             )
 
-        y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
         return y_np
     
     
@@ -2525,7 +2533,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             res_error = res_error.to(self.device)
             #I DONT denormalise the res_error, I can simply denormalise the corrected states
             pred_states_ = out_lin_norm + res_error
-            pred_states_ = utils.denormalize(pred_states_, _state_mean_torch, _state_std_torch)
+            pred_states_ = utils.denormalize(pred_states_, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
             pred_states_ = pred_states_.to(self.device)
 
             filler_forces_ = self._inputnet.forward(x0_control)
@@ -2636,7 +2644,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
+                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
                 outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
