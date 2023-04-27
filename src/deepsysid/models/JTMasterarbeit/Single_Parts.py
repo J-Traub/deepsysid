@@ -1124,8 +1124,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -1381,7 +1383,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     outputs.append(corr_state)
 
                     #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
                     states_next = self._diskretized_linear.forward(
                         input_forces=in_lin,
                         states=corr_state_denorm
@@ -1710,8 +1712,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -2071,7 +2075,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     outputs.append(corr_state)
 
                     #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
                     states_next = self._diskretized_linear.forward(
                         input_forces=in_lin,
                         states=corr_state_denorm
@@ -2239,7 +2243,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     outputs.append(corr_state)
 
                     #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
                     states_next = self._diskretized_linear.forward(
                         input_forces=in_lin,
                         states=corr_state_denorm
@@ -2367,8 +2371,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             raise ValueError('Model has not been trained and cannot simulate.')
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
         self._diskretized_linear.eval()
         self._inputRNNnet.eval()
@@ -2433,7 +2439,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
                 outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
@@ -2473,8 +2479,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
@@ -2533,7 +2541,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             res_error = res_error.to(self.device)
             #I DONT denormalise the res_error, I can simply denormalise the corrected states
             pred_states_ = out_lin_norm + res_error
-            pred_states_ = utils.denormalize(pred_states_, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            pred_states_ = utils.denormalize(pred_states_, _state_mean_torch, _state_std_torch)
             pred_states_ = pred_states_.to(self.device)
 
             filler_forces_ = self._inputnet.forward(x0_control)
@@ -2572,8 +2580,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
@@ -2644,7 +2654,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
                 corr_state = out_lin_norm+eout
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
                 outputs.append(corr_state_denorm)
                 #this takes the denormalized corrected state as input
                 states_next = self._diskretized_linear.forward(
