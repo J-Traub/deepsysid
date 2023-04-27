@@ -901,8 +901,8 @@ class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
     epochs_predictor_multistep: int
     bias: bool
     log_min_max_real_eigenvalues: Optional[bool] = False
-    RNNinputnetbool = bool
-    forward_alt_bool = bool
+    RNNinputnetbool : bool
+    forward_alt_bool : bool
 
 #for some reason i called it convRNN but i meant ConstRNN
 #as in constrained RNN
@@ -1139,8 +1139,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -1207,7 +1207,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 if self.forward_alt_bool:
                     res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
                 else:
-                    res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=None)
+                    res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
                 #Also in simulation I can simply denormalise the corrected state
@@ -1405,7 +1405,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     if self.forward_alt_bool:
                         res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
                     else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, hx=x)
+                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
                     res_error = res_error.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -1753,8 +1753,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -1835,7 +1835,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 if self.forward_alt_bool:
                     res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
                 else:
-                    res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=None)
+                    res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
                 #Also in simulation I can simply denormalise the corrected state
@@ -1963,7 +1963,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 if self.forward_alt_bool:
                     res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
                 else:
-                    res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=None)
+                    res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
                 res_error = res_error.to(self.device)
                 corr_states = out_lin_norm+res_error
                 barrier = self._predictor.get_barrier(t).to(self.device)
@@ -2115,7 +2115,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     if self.forward_alt_bool:
                         res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
                     else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, hx=x)
+                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
                     res_error = res_error.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -2287,7 +2287,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     if self.forward_alt_bool:
                         res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
                     else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, hx=x)
+                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
                     res_error = res_error.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -2423,8 +2423,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             raise ValueError('Model has not been trained and cannot simulate.')
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
         self._diskretized_linear.eval()
         self._inputRNNnet.eval()
@@ -2486,7 +2486,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 if self.forward_alt_bool:
                     res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
                 else:
-                    res_error, x = self._predictor.forward(x_pred = rnn_input, hx=x)
+                    res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
                 res_error = res_error.to(self.device)
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
@@ -2539,8 +2539,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
@@ -2593,7 +2593,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             if self.forward_alt_bool:
                 res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
             else:
-                res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=None)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
             res_error = res_error.to(self.device)
             #I DONT denormalise the res_error, I can simply denormalise the corrected states
             pred_states_ = out_lin_norm + res_error
@@ -2645,8 +2645,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
@@ -2715,7 +2715,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 if self.forward_alt_bool:
                     res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
                 else:
-                    res_error, x = self._predictor.forward(x_pred = rnn_input, hx=x)
+                    res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
                 res_error = res_error.to(self.device)
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
