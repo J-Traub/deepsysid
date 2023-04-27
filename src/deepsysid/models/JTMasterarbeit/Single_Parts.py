@@ -1191,7 +1191,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in =batch['control'].float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
                 #Also in simulation I can simply denormalise the corrected state
@@ -1355,7 +1355,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 else:
                     control_ =batch['control'].float().to(self.device)
                 input_lin = self._inputnet.forward(control_)
-                x = hx
+                x = None
                  
                 outputs =[]
                 #get the sequence dimension, sanity check: is sequence length?
@@ -1789,7 +1789,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in =batch['control'].float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
 
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
@@ -1915,7 +1915,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in = control.float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
                 res_error = res_error.to(self.device)
                 corr_states = out_lin_norm+res_error
                 barrier = self._predictor.get_barrier(t).to(self.device)
@@ -2045,7 +2045,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 else:
                     control_ =batch['control'].float().to(self.device)
                 input_lin = self._inputnet.forward(control_)
-                x = hx
+                x = None
                  
                 outputs =[]
                 #get the sequence dimension, sanity check: is sequence length?
@@ -2213,7 +2213,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 else:
                     control_ =control.float().to(self.device)
                 input_lin = self._inputnet.forward(control_)
-                x = hx
+                x = None
                  
                 outputs =[]
                 #get the sequence dimension, sanity check: is sequence length?
@@ -2409,7 +2409,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
             #init the hidden state of our RNN
             _, hx = self._initializer.forward(init_x)
-            x = hx
+            x = None
 
             input_lin = self._inputnet.forward(control_)
 
@@ -2529,7 +2529,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             _, hx = self._initializer.forward(x0_init)
             out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
             rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
-            res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+            res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
             res_error = res_error.to(self.device)
             #I DONT denormalise the res_error, I can simply denormalise the corrected states
             pred_states_ = out_lin_norm + res_error
@@ -2612,7 +2612,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
             #init the hidden state of our RNN
             _, hx = self._initializer.forward(init_x)
-            x = hx
+            x = None
 
             input_lin = self._inputnet.forward(control_)
 
@@ -2889,7 +2889,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 #                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
 #                 # Predict and optimize
 #                 y, _ = self._predictor.forward(
-#                     batch['x'].float().to(self.device), hx=hx
+#                     batch['x'].float().to(self.device), hx=None
 #                 )
 #                 y = y.to(self.device)
 #                 batch_loss = self.loss.forward(y, batch['y'].float().to(self.device))
@@ -2966,7 +2966,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 #             pred_x = torch.from_numpy(u).unsqueeze(0).float().to(self.device)
 
 #             _, hx = self._initializer.forward(init_x)
-#             y, _ = self._predictor.forward(pred_x, hx=hx)
+#             y, _ = self._predictor.forward(pred_x, hx=None)
 #             y_np: NDArray[np.float64] = (
 #                 y.cpu().detach().squeeze().numpy().astype(np.float64)
 #             )
@@ -3039,7 +3039,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 #             _, hx = self._initializer.forward(x0_init)
 #             # out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 #             # rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
-#             res_error, _ = self._predictor.forward(x_pred = curr_cont_in,hx=hx)
+#             res_error, _ = self._predictor.forward(x_pred = curr_cont_in,hx=None)
 #             # res_error_denorm = utils.denormalize(res_error.to(self.device), _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 #             pred_states_ = res_error.to(self.device)#res_error_denorm.to(self.device)#outlin + res_error.to(self.device)
 
