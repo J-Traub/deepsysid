@@ -967,7 +967,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             nx=self.nx,
             #in dimesion is state+ output of inputnet dismesion
             #TODO: make it variable when making the inputnet variable
-            nu=self.state_dim+self.control_dim+1,################################
+            nu=self.state_dim+self.control_dim,################################
             ny=self.state_dim,
             nw=self.recurrent_dim,
             gamma=self.gamma,
@@ -1193,7 +1193,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in =batch['control'].float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=hx)
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
                 #Also in simulation I can simply denormalise the corrected state
@@ -1375,7 +1375,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                     rnn_in = torch.concat([control_in, out_lin_norm],dim=2)
-                    eout, x = self._predictor.forward_alt(rnn_in, device=self.device, hx=x)
+                    eout, x = self._predictor.forward(rnn_in, hx=x)
                     eout = eout.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -1793,7 +1793,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in =batch['control'].float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=hx)
 
 
                 #I DONT denormalise the res_error since here i stay in normalised states for the loss
@@ -1919,7 +1919,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_in = control.float().to(self.device)
                 #do the rnn 
                 rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+                res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=hx)
                 res_error = res_error.to(self.device)
                 corr_states = out_lin_norm+res_error
                 barrier = self._predictor.get_barrier(t).to(self.device)
@@ -2067,7 +2067,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                     rnn_in = torch.concat([control_in, out_lin_norm],dim=2)
-                    eout, x = self._predictor.forward_alt(rnn_in, device=self.device, hx=x)
+                    eout, x = self._predictor.forward(rnn_in, hx=x)
                     eout = eout.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -2235,7 +2235,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                     rnn_in = torch.concat([control_in, out_lin_norm],dim=2)
-                    eout, x = self._predictor.forward_alt(rnn_in, device=self.device, hx=x)
+                    eout, x = self._predictor.forward(rnn_in, hx=x)
                     eout = eout.to(self.device)
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
@@ -2434,7 +2434,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #needs batch and sequence format
                 control_in_ = control_in.unsqueeze(0).unsqueeze(0)
                 rnn_in = torch.concat([control_in_, out_lin_norm],dim=2)
-                eout, x = self._predictor.forward_alt(rnn_in, device=self.device, hx=x)
+                eout, x = self._predictor.forward(rnn_in, hx=x)
                 eout = eout.to(self.device)
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
@@ -2537,7 +2537,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             _, hx = self._initializer.forward(x0_init)
             out_lin_norm = utils.normalize(outlin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
             rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
-            res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
+            res_error, _ = self._predictor.forward(x_pred = rnn_input, hx=hx)
             res_error = res_error.to(self.device)
             #I DONT denormalise the res_error, I can simply denormalise the corrected states
             pred_states_ = out_lin_norm + res_error
@@ -2649,7 +2649,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                 rnn_in = torch.concat([control_in_, out_lin_norm],dim=2)
-                eout, x = self._predictor.forward_alt(rnn_in, device=self.device, hx=x)
+                eout, x = self._predictor.forward(rnn_in, hx=x)
                 eout = eout.to(self.device)
                 # hx has a very wierd format and is not the same as the output x
                 x = [[x[0],x[0]]]
