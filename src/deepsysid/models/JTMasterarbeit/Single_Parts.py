@@ -1687,112 +1687,116 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                  true_input_pred_states.detach().cpu().numpy().astype(np.float64))
 
 
-    # def simulate_inputforces_multistep(
-    #     self,
-    #     controls: NDArray[np.float64],
-    #     states: NDArray[np.float64],
-    #     forces: NDArray[np.float64],
-    # ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    #     if (
-    #         self.control_mean is None
-    #         or self.control_std is None
-    #         or self.state_mean is None
-    #         or self.state_std is None
-    #     ):
-    #         raise ValueError('Model has not been trained and cannot simulate.')
-    #     self._diskretized_linear.eval()
-    #     self._inputnet.eval()
-    #     self._initializer.eval()
-    #     self._predictor.eval()
+    def simulate_inputforces_multistep(
+        self,
+        controls: NDArray[np.float64],
+        states: NDArray[np.float64],
+        forces: NDArray[np.float64],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+        if (
+            self.control_mean is None
+            or self.control_std is None
+            or self.state_mean is None
+            or self.state_std is None
+        ):
+            raise ValueError('Model has not been trained and cannot simulate.')
+        self._inputnet.eval()
+        self._inputRNNnet.eval()
+        self._diskretized_linear.eval()
+        self._predictor.eval()
+        self._initializer.eval()
 
-    #     controls_ = utils.normalize(controls, self._control_mean, self._control_std)
-    #     states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
+        controls_ = utils.normalize(controls, self._control_mean, self._control_std)
+        states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-    #     _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
-    #     _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
-    #     _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-    #     _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        # _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        # _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
+        _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
-    #     controls_ = torch.from_numpy(controls_).float().to(self.device)
-    #     states_ = torch.from_numpy(states).float().to(self.device)
-    #     forces_ = torch.from_numpy(forces).float().to(self.device)
-    #     states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
+        controls_ = torch.from_numpy(controls_).float().to(self.device)
+        states_ = torch.from_numpy(states).float().to(self.device)
+        states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
 
-    #     x0_control = controls_[:, :50, :]
-    #     x0_states_normed_ = states_normed_[:, :50, :]
-    #     x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
+        x0_control = controls_[:, :50, :]
+        x0_states_normed_ = states_normed_[:, :50, :]
+        x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
 
-    #     #the 49 incooperates the init of the diskretized linear 
-    #     #and we then drop the last state since, while we can compute
-    #     # the last next state we dont have meassurements there 
-    #     prev_cont_in = controls_[:, 49:, :]
-    #     lin_state_in = states_[:, 49:, :]
-    #     lin_forces_in = forces_[:, 49:, :]
+        control_ = controls_[:, 50:,:]
 
-    #     #for the RNN we now need the values from 50 onward
-    #     curr_cont_in =controls_[:, 50:, :]
-
-
-    #     with torch.no_grad():
-    #         last_init_cont = init_cont[-1,:].unsqueeze(0).float().to(self.device)
-    #         last_init_state = init_state[-1,:].unsqueeze(0).float().to(self.device)
+        with torch.no_grad():
+            #TODO: does it take only one? and the right one?
+            last_init_cont = controls_[:, 49:50, :].float().to(self.device)
+            last_init_state = states_[:, 49:50, :].float().to(self.device)
             
-    #         init_input_lin_ = self._inputnet.forward(last_init_cont)
-    #         last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
+            init_input_lin_ = self._inputnet.forward(last_init_cont)
+            last_init_state = utils.denormalize(last_init_state, _state_mean_torch, _state_std_torch)
 
-    #         #init the diskretized_linear internal state
-    #         states_next = self._diskretized_linear.forward(
-    #             input_forces=init_input_lin_,
-    #             states=last_init_state,
-    #             residual_errors=0, #initial state has no error
-    #             )
-    #         #needs batch and sequence format
-    #         states_next = states_next.unsqueeze(0)
+            #init the diskretized_linear internal state
+            states_next = self._diskretized_linear.forward(
+                input_forces=init_input_lin_,
+                states=last_init_state, #initial state has no error
+                )
 
-    #         init_x = (
-    #             torch.from_numpy(np.hstack((init_cont[1:], init_state[:-1])))
-    #             .unsqueeze(0)
-    #             .float()
-    #             .to(self.device)
-    #         )
+            #TODO: make this correct 
+            # init_x = (
+            #     torch.from_numpy(np.hstack((init_cont[1:], init_state[:-1])))
+            #     .unsqueeze(0)
+            #     .float()
+            #     .to(self.device)
+            # )
+            init_x = x0_init
 
-    #         #init the hidden state of our RNN
-    #         _, hx = self._initializer.forward(init_x)
-    #         x = hx
+            #init the hidden state of our RNN
+            _, hx = self._initializer.forward(init_x)
+            x = hx
 
-    #         input_lin = self._inputnet.forward(control_)
+            input_lin = self._inputnet.forward(control_)
 
-    #         outputs =[]
+            outputs =[]
+            filler_forces_ = self._inputnet.forward(x0_control)
 
-    #         for in_lin, control_in in zip(input_lin,control_):
+            # split the tensors along the second dimension
+            input_lin_list = torch.unbind(input_lin, dim=1)
+            control_list = torch.unbind(control_, dim=1)
 
-    #             out_lin = self._diskretized_linear.calc_output(
-    #                 states = states_next,
-    #             )
-    #             #needs batch and sequence format
-    #             control_in_ = control_in.unsqueeze(0).unsqueeze(0)
-    #             rnn_in = torch.concat([control_in_, out_lin],dim=2)
-    #             eout, x = self._predictor.forward(rnn_in, hx=x)
-    #             eout = eout.to(self.device)
-    #             # hx has a very wierd format and is not the same as the output x
-    #             x = [[x[0],x[0]]]
-    #             corr_state = out_lin+eout
-    #             outputs.append(corr_state)
-    #             states_next = self._diskretized_linear.forward(
-    #                 input_forces=in_lin.unsqueeze(0),
-    #                 states=out_lin,
-    #                 residual_errors= eout
-    #                 )
+            # iterate over the resulting tensors
+            for in_lin, control_in in zip(input_lin_list, control_list):
+                
+                #needs batch and sequence format
+                in_lin_ = torch.unsqueeze(in_lin, dim=1)
+                control_in_ = torch.unsqueeze(control_in, dim=1)
 
-            
-    #         outputs_tensor = torch.cat(outputs, dim=1)
-    #         y_np: NDArray[np.float64] = (
-    #             outputs_tensor.cpu().detach().squeeze().numpy().astype(np.float64)
-    #         )
+                out_lin = self._diskretized_linear.calc_output(
+                    states = states_next,
+                )
+                out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-    #     y_np = utils.denormalize(y_np, self.state_mean, self.state_std)
-    #     return y_np
+                rnn_in = torch.concat([control_in_, out_lin_norm],dim=2)
+                eout, x = self._predictor.forward(rnn_in, hx=x)
+                eout = eout.to(self.device)
+                # hx has a very wierd format and is not the same as the output x
+                x = [[x[0],x[0]]]
+                corr_state = out_lin_norm+eout
+                corr_state_denorm = utils.denormalize(corr_state, _state_mean_torch, _state_std_torch)
+                outputs.append(corr_state_denorm)
+                #this takes the denormalized corrected state as input
+                states_next = self._diskretized_linear.forward(
+                    input_forces=in_lin_,
+                    states=corr_state_denorm,
+                    )
+            outputs_tensor = torch.cat(outputs, dim=1)
 
+        #fill the start that is used for initialisation with nans
+        filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
+        filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
+        pred_states = torch.concat((filler_nans_states,outputs_tensor),dim=1)
+        curr_input_forces = torch.concat((filler_nans_cont,input_lin),dim=1)
+
+        return (curr_input_forces.detach().cpu().numpy().astype(np.float64),
+                 pred_states.detach().cpu().numpy().astype(np.float64))
 
     def save(self, file_path: Tuple[str, ...]) -> None:
         if (
