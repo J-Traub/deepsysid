@@ -231,33 +231,33 @@ class InputNet(nn.Module):
         x = self.fc5(x)
         return x
     
+#TODO LayerNorm normalises across all features 
+# so it might normalise each point in the sequence
+# which would kinda go against the inteded purpose
 class InputRNNNet(nn.Module):
     def __init__(self, dropout: float, control_dim: int):
         super(InputRNNNet, self).__init__()
         self.fc1 = nn.Linear(control_dim, 32)  # 6 input features, 32 output features
         self.fc2 = nn.Linear(32, 64)  # 32 input features, 64 output features
-        # self.fc3 = nn.Linear(64, control_dim)  # 64 input features, 4 output features
-        self.fc3 = nn.Linear(64, 128)  # 64 input features, 128 output features
-        self.fc4 = nn.Linear(128, 64)  # 128 input features, 64 output features
-        self.fc5 = nn.Linear(64, control_dim)  # 64 input features, 4 output features
+        self.fc3 = nn.Linear(64, control_dim)  # 64 input features, 4 output features
 
         self.relu = nn.ReLU()  # activation function
         self.dropout = nn.Dropout(dropout)  # dropout regularization
 
+        # LayerNorm
+        self.norm1 = nn.LayerNorm(32)
+        self.norm2 = nn.LayerNorm(64)
+
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
+        x = self.norm1(x)  # apply layer normalization
         x = self.fc2(x)
         x = self.relu(x)
-        x = self.dropout(x)
+        # x = self.dropout(x)
+        x = self.norm2(x)  # apply layer normalization
         x = self.fc3(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc4(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc5(x)
         return x
 
 class DiskretizedLinear(nn.Module):
@@ -1139,8 +1139,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -1209,16 +1209,15 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 else:
                     res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
 
-                #I DONT denormalise the res_error since here i stay in normalised states for the loss
-                #Also in simulation I can simply denormalise the corrected state
                 res_error = res_error.to(self.device)
                 #calculated the corrected output and barrier
                 # it is impotant to note that batch['states'] are normalised states (see loss)
                 corr_states = out_lin_norm+res_error
 
+                #denormalize to go trough possible linear system output
                 corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-                #this is functionally the same as out_lin = lin_states but is good for understanding
+                #this is functionally the same as output = corr_states_denorm but is good for understanding
                 #and in case there is direct feedtrough it becomes important but then also needs an extra
                 #network to correct the direct feedthrough
                 output = self._diskretized_linear.calc_output(
@@ -1753,8 +1752,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
     
         ###########################
         #Predictor (ConvRNN) training
@@ -1792,6 +1791,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             )
             total_loss = 0
             max_grad = 0
+
+            #because of validation
+            self._predictor.train()
+
             for batch_idx, batch in enumerate(data_loader):
                 self._predictor.zero_grad()
 
@@ -1815,15 +1818,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     states=states_prev_,
                     residual_errors= 0, #since it's onestep prediction, the input state has no error
                 )
-                #this is functionally the same as out_lin = lin_states but is good for understanding
-                out_lin = self._diskretized_linear.calc_output(
-                    input_forces= linear_inputs_curr,
-                    states= lin_states
-                )
-                
+ 
+                #just for me  (represents the timestep such that x(k+1) becomes x(k))
+                lin_in_rnn = lin_states               
 
                 #normalize the out_lin
-                out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                 #with inputnet for the control inputs?
                 if self.RNNinputnetbool:
@@ -1837,22 +1837,33 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 else:
                     res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
 
-                #I DONT denormalise the res_error since here i stay in normalised states for the loss
-                #Also in simulation I can simply denormalise the corrected state
                 res_error = res_error.to(self.device)
                 #calculated the corrected output and barrier
                 # it is impotant to note that batch['states'] are normalised states (see loss)
                 corr_states = out_lin_norm+res_error
+
+                #denormalize to go trough possible linear system output
+                corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+
+                #this is functionally the same as output = corr_states_denorm but is good for understanding
+                #and in case there is direct feedtrough it becomes important but then also needs an extra
+                #network to correct the direct feedthrough
+                output = self._diskretized_linear.calc_output(
+                    states= corr_states_denorm
+                )
+                output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+
+
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
                 #loss calculation, when weights are all 1, they are equivalent 
                 if loss_weights is None:
                     batch_loss = self.loss.forward(
-                        corr_states, batch['states'].float().to(self.device)
+                        output_normed, batch['states'].float().to(self.device)
                         )
                 else:
                     batch_loss = torch.mean(
-                        ((batch['states'].float().to(self.device) - corr_states) ** 2) * loss_weights
+                        ((batch['states'].float().to(self.device) - output_normed) ** 2) * loss_weights
                         )
                 
                 
@@ -1944,14 +1955,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     states=states_prev_,
                     residual_errors= 0, #since it's onestep prediction, the input state has no error
                 )
-                #this is functionally the same as out_lin = lin_states but is good for understanding
-                out_lin = self._diskretized_linear.calc_output(
-                    input_forces= linear_inputs_curr,
-                    states= lin_states
-                )
+
+                #just for me  (represents the timestep such that x(k+1) becomes x(k))
+                lin_in_rnn = lin_states
                 
                 #normalize the out_lin
-                out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                 #with inputnet for the control inputs?
                 if self.RNNinputnetbool:
@@ -1966,17 +1975,29 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
                 res_error = res_error.to(self.device)
                 corr_states = out_lin_norm+res_error
+
+                #denormalize to go trough possible linear system output
+                corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+
+                #this is functionally the same as output = corr_states_denorm but is good for understanding
+                #and in case there is direct feedtrough it becomes important but then also needs an extra
+                #network to correct the direct feedthrough
+                output = self._diskretized_linear.calc_output(
+                    states= corr_states_denorm
+                )
+                output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
                 #loss calculation, when weights are all 1, they are equivalent 
                 if loss_weights is None:
                     validation_loss = self.loss.forward(
-                        corr_states, states.float().to(self.device)
+                        output_normed, states.float().to(self.device)
                         )
                 else:
                     #TODO: check if dimesnions are correct
                     validation_loss = torch.mean(
-                        ((states.float().to(self.device) - corr_states) ** 2) * loss_weights
+                        ((states.float().to(self.device) - output_normed) ** 2) * loss_weights
                         )
 
                 # Check if the current validation loss is the best so far
@@ -2066,6 +2087,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             )
             total_loss = 0
             max_grad = 0
+
+            #because of validation
+            self._predictor.train()
+
             for batch_idx, batch in enumerate(data_loader):
                 self._predictor.zero_grad()
 
@@ -2104,12 +2129,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     in_lin = input_lin[:,seq_step:seq_step+1,:]
                     control_in = control_[:,seq_step:seq_step+1,:]
                     
-                    out_lin = self._diskretized_linear.calc_output(
-                        states = states_next,
-                    )
+                    #just for me (represents the timestep such that x(k+1) becomes x(k))
+                    lin_in_rnn = states_next
                     
                     #normalize the out_lin
-                    out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                     rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
                     if self.forward_alt_bool:
@@ -2120,14 +2144,26 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
                     corr_state = out_lin_norm+res_error
-                    outputs.append(corr_state)
 
                     #denormalize the corrected state and use it as new state for the linear
                     corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    
+                    #this takes the denormalized corrected state as input
                     states_next = self._diskretized_linear.forward(
                         input_forces=in_lin,
                         states=corr_state_denorm
                         )
+                    
+                    #this is functionally the same as out_lin = lin_states but is good for understanding
+                    #and in case there is direct feedtrough it becomes important but then also needs an extra
+                    #network to correct the direct feedthrough
+                    output = self._diskretized_linear.calc_output(
+                        states= corr_state_denorm
+                    )
+                    output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+                    outputs.append(output_normed)
+
+
                 outputs_tensor = torch.cat(outputs, dim=1)
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
@@ -2137,7 +2173,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 #loss calculation, when weights are all 1, they are equivalent    
                 if loss_weights is None:
-                    batch_loss = F.mse_loss(
+                    batch_loss = self.loss.forward(
                         outputs_tensor, true_state
                     )
                 else:
@@ -2264,7 +2300,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     control_ = self._inputRNNnet.forward(control.float().to(self.device))
                 else:
                     control_ =control.float().to(self.device)
-                control_lin =batch['control'].float().to(self.device)
+
+                control_lin =control.float().to(self.device)
                 input_lin = self._inputnet.forward(control_lin)
                 x = None
                  
@@ -2276,12 +2313,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     in_lin = input_lin[:,seq_step:seq_step+1,:]
                     control_in = control_[:,seq_step:seq_step+1,:]
                     
-                    out_lin = self._diskretized_linear.calc_output(
-                        states = states_next,
-                    )
+                    #just for me (represents the timestep such that x(k+1) becomes x(k))
+                    lin_in_rnn = states_next
                     
                     #normalize the out_lin
-                    out_lin_norm = utils.normalize(out_lin, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
                     rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
                     if self.forward_alt_bool:
@@ -2292,7 +2328,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     # hx has a very wierd format and is not the same as the output x
                     x = [[x[0],x[0]]]
                     corr_state = out_lin_norm+res_error
-                    outputs.append(corr_state)
 
                     #denormalize the corrected state and use it as new state for the linear
                     corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
@@ -2300,6 +2335,16 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         input_forces=in_lin,
                         states=corr_state_denorm
                         )
+                    
+                    #this is functionally the same as out_lin = lin_states but is good for understanding
+                    #and in case there is direct feedtrough it becomes important but then also needs an extra
+                    #network to correct the direct feedthrough
+                    output = self._diskretized_linear.calc_output(
+                        states= corr_state_denorm
+                    )
+                    output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+                    outputs.append(output_normed)                    
+
                 outputs_tensor = torch.cat(outputs, dim=1)
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
@@ -2309,7 +2354,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 #loss calculation, when weights are all 1, they are equivalent    
                 if loss_weights is None:
-                    validation_loss = F.mse_loss(
+                    validation_loss = self.loss.forward(
                         outputs_tensor, true_state
                     )
                 else:
@@ -2423,8 +2468,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             raise ValueError('Model has not been trained and cannot simulate.')
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
 
         self._diskretized_linear.eval()
         self._inputRNNnet.eval()
@@ -2539,8 +2584,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
@@ -2645,8 +2690,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
-        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean).float().to(self.device)
-        _state_std_RNN_in_torch = torch.from_numpy(self._state_std).float().to(self.device)
+        _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
+        _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
 
