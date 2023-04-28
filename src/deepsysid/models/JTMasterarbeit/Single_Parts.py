@@ -131,7 +131,7 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, NDArray[np.flo
                 dtype=np.float64,
             )
 
-            #TODO: sanity check
+            #TODO: sanity check check
             x0_ = np.zeros(
                 (n_samples, self.sequence_length, self.control_dim + self.state_dim),
                 dtype=np.float64,
