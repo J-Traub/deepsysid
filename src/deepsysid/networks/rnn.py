@@ -357,6 +357,7 @@ class LtiRnnConvConstr(HiddenStateForwardModule):
     def forward(
         self,
         x_pred: torch.Tensor,
+        device: Optional[str] = "cpu",
         hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         n_batch, n_sample, _ = x_pred.shape
@@ -364,12 +365,12 @@ class LtiRnnConvConstr(HiddenStateForwardModule):
         Y_inv = self.Y.inverse()
         T_inv = torch.diag(1 / torch.squeeze(self.lambdas))
         # initialize output
-        y = torch.zeros((n_batch, n_sample, self.ny))
+        y = torch.zeros((n_batch, n_sample, self.ny),device=device)
 
         if hx is not None:
             x = hx[0][1]
         else:
-            x = torch.zeros((n_batch, self.nx))
+            x = torch.zeros((n_batch, self.nx),device=device)
 
         for k in range(n_sample):
             z = (self.C2_tilde(x) + self.D21_tilde(x_pred[:, k, :]) + self.b_z) @ T_inv
