@@ -903,6 +903,7 @@ class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
     log_min_max_real_eigenvalues: Optional[bool] = False
     RNNinputnetbool : bool
     forward_alt_bool : bool
+    sequence_length_list : List[int]
 
 #for some reason i called it convRNN but i meant ConstRNN
 #as in constrained RNN
@@ -956,6 +957,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         self.RNNinputnetbool = config.RNNinputnetbool
         self.forward_alt_bool = config.forward_alt_bool
+        self.sequence_length_list = config.sequence_length_list
 
         #TODO:msge should probably never be used
         if config.loss == 'mse':
@@ -1071,15 +1073,16 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 batch_loss.backward()
                 self.optimizer_init.step()
 
+            loss_average = total_loss/(len(data_loader))
             logger.info(
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
-                f'Epoch Loss (Initializer): {total_loss}'
+                f'Epoch Loss (Initializer): {loss_average}'
             )
             print(
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
-                f'Epoch Loss (Initializer): {total_loss}'
+                f'Epoch Loss (Initializer): {loss_average}'
             )
-            initializer_loss.append([i,np.float64(total_loss)])
+            initializer_loss.append([i,np.float64(loss_average)])
         time_end_init = time.time()
 
         ###########################
@@ -1121,6 +1124,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 max_batches = batch_idx
 
             loss_average = total_loss/(max_batches+1)
+            #TODO: sanity check if same
+            loss_average_ = total_loss/(len(data_loader))
             logger.info(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             print(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             inputfnn_losses.append([i, loss_average])
@@ -1299,21 +1304,23 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             if self.log_min_max_real_eigenvalues:
                 min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
 
+            loss_average = total_loss/(len(data_loader))
+
             logger.info(
                 f'Epoch {i + 1}/{self.epochs_predictor_singlestep}\t'
-                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Total Loss (Predictor): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
             print(
                 f'Epoch {i + 1}/{self.epochs_predictor_singlestep}\t'
-                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Total Loss (Predictor): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss.append([i,np.float64(total_loss)])
+            predictor_loss.append([i,np.float64(loss_average)])
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
@@ -1515,21 +1522,23 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             if self.log_min_max_real_eigenvalues:
                 min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
 
+            loss_average = total_loss/(len(data_loader))
+
             logger.info(
                 f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
-                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
+                f'Total Loss (Predictor Multistep): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
             print(
                 f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
-                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
+                f'Total Loss (Predictor Multistep): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss_multistep.append([i,np.float64(total_loss)])
+            predictor_loss_multistep.append([i,np.float64(loss_average)])
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
@@ -1624,15 +1633,17 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 batch_loss.backward()
                 self.optimizer_init.step()
 
+            loss_average = total_loss/(len(data_loader))
+
             logger.info(
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
-                f'Epoch Loss (Initializer): {total_loss}'
+                f'Epoch Loss (Initializer): {loss_average}'
             )
             print(
                 f'Epoch {i + 1}/{self.epochs_initializer}\t'
-                f'Epoch Loss (Initializer): {total_loss}'
+                f'Epoch Loss (Initializer): {loss_average}'
             )
-            initializer_loss.append([i,np.float64(total_loss)])
+            initializer_loss.append([i,np.float64(loss_average)])
         time_end_init = time.time()
 
         ###########################
@@ -1723,7 +1734,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     inputfnn_best_val_loss = validation_loss
                     inputfnn_best_epoch = i
 
-            loss_average = total_loss/(max_batches+1)
+            loss_average_ = total_loss/(max_batches+1)
+            #TODO:sanity check
+            loss_average = total_loss/(len(data_loader))
             logger.info(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             print(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             inputfnn_losses.append([i, loss_average])
@@ -1771,7 +1784,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
             us_vali,
             ys_vali,
-            self.sequence_length
+            sequence_length = 900, #validation sequence length should be static i think
             )
 
         predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, self.sequence_length)
@@ -2021,21 +2034,23 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             if self.log_min_max_real_eigenvalues:
                 min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
 
+            loss_average = total_loss/(len(data_loader))
+
             logger.info(
                 f'Epoch {i + 1}/{self.epochs_predictor_singlestep}\t'
-                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Total Loss (Predictor): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
             print(
                 f'Epoch {i + 1}/{self.epochs_predictor_singlestep}\t'
-                f'Total Loss (Predictor): {total_loss:1f} \t'
+                f'Total Loss (Predictor): {loss_average:1f} \t'
                 f'Barrier: {barrier:1f}\t'
                 f'Backtracking Line Search iteration: {bls_iter}\t'
                 f'Max accumulated gradient norm: {max_grad:1f}'
             )
-            predictor_loss.append([i,np.float64(total_loss)])
+            predictor_loss.append([i,np.float64(loss_average)])
             barrier_value.append(barrier.cpu().detach().numpy())
             backtracking_iter.append(np.float64(bls_iter))
             gradient_norm.append(np.float64(max_grad))
@@ -2058,362 +2073,378 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #multi-step training
         #################################
         self._inputnet.eval()
-
-        #break training loop if constraint is failed 
-        # (will then fall back to last validation checkpoint)
-        stop_train = False
-                
-        #reset optimizer
-        if self.RNNinputnetbool:
-            #learning rate could be made different between the two
-            self.optimizer_pred_multistep = optim.Adam([
-                {'params': self._inputRNNnet.parameters(), 'lr': self.learning_rate},
-                {'params': self._predictor.parameters(), 'lr': self.learning_rate}
-            ])
-        else:
-            self.optimizer_pred_multistep = optim.Adam(
-                self._predictor.parameters(), lr=self.learning_rate
-            )
-
-
-        time_start_pred = time.time()
-        t = self.initial_decay_parameter
-        predictor_loss_multistep: List[np.float64] = []
-        min_eigenvalue: List[np.float64] = []
-        max_eigenvalue: List[np.float64] = []
-        barrier_value: List[np.float64] = []
-        gradient_norm: List[np.float64] = []
-        backtracking_iter: List[np.float64] = []
         
-        for i in range(self.epochs_predictor_multistep):
-            data_loader = data.DataLoader(
-                predictor_dataset, self.batch_size, shuffle=True, drop_last=True
-            )
-            total_loss = 0
-            max_grad = 0
+        #let the sequence length rise slowley and always when
+        # validation early stopping triggers or constraints are violated 
+        #=> Due to the Validation loss beeing on a fixed sequence it is not affected
+        #   by the change of the loss due to different sequence length
+        #       => sequence length does not effect loss but the sumation 
+        #          over all batches without division over the number of batches does
+        for seq_len in self.sequence_length_list:
+            #break training loop if constraint is failed 
+            # (will then fall back to last validation checkpoint)
+            stop_train = False
 
-            #because of validation
-            self._predictor.train()
-
-            for batch_idx, batch in enumerate(data_loader):
-                self._predictor.zero_grad()
-
-                # Initialize predictor with state of initializer network
-                _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
-
-                #hopefully more understandable:
-                # as we initialize the hiddenstate of the RNN we need to initialize
-                # the internal state of the _diskretized_linear the first computation
-                # of the error can be omitted for this since we can expect that the
-                # initial state as no error 
-
-                #we need only the last point of the x0 sequence for init of the linear
-                init_control = batch['x0_control'].float().to(self.device)[:,-1:,:]
-                init_state = batch['x0_states'].float().to(self.device)[:,-1:,:]
-                init_input = self._inputnet.forward(init_control)
-                states_next = self._diskretized_linear.forward(
-                    input_forces= init_input,
-                    states=init_state,
-                    residual_errors= 0)
-                
-                #get all inputs
-                if self.RNNinputnetbool:
-                    control_ = self._inputRNNnet.forward(batch['control'].float().to(self.device))
-                else:
-                    control_ =batch['control'].float().to(self.device)
-                control_lin =batch['control'].float().to(self.device)
-                input_lin = self._inputnet.forward(control_lin)
-                x = None
-                 
-                outputs =[]
-                #get the sequence dimension, sanity check: is sequence length?
-                seq_len = control_.size(dim=1)
-                for seq_step in range(seq_len):
-                    #seq_step:seq_step+1 preserves the original dimensionality
-                    in_lin = input_lin[:,seq_step:seq_step+1,:]
-                    control_in = control_[:,seq_step:seq_step+1,:]
+            #make dataset with rising sequence length
+            predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, seq_len)
                     
-                    #just for me (represents the timestep such that x(k+1) becomes x(k))
-                    lin_in_rnn = states_next
-                    
-                    #normalize the out_lin
-                    out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            #TODO: does it make sense to reset the optimizer each time 
+            #      => at least as long as the sequence length affects loss calculation
+            #       => sequence length does not effect loss but the sumation 
+            #          over all batches without division over the number of batches does
+            #reset optimizer
+            if self.RNNinputnetbool:
+                #learning rate could be made different between the two
+                self.optimizer_pred_multistep = optim.Adam([
+                    {'params': self._inputRNNnet.parameters(), 'lr': self.learning_rate},
+                    {'params': self._predictor.parameters(), 'lr': self.learning_rate}
+                ])
+            else:
+                self.optimizer_pred_multistep = optim.Adam(
+                    self._predictor.parameters(), lr=self.learning_rate
+                )
 
-                    rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
-                    if self.forward_alt_bool:
-                        res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
-                    else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                    res_error = res_error.to(self.device)
-                    # hx has a very wierd format and is not the same as the output x
-                    x = [[x[0],x[0]]]
-                    corr_state = out_lin_norm+res_error
 
-                    #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-                    
-                    #this takes the denormalized corrected state as input
+            time_start_pred = time.time()
+            t = self.initial_decay_parameter
+            predictor_loss_multistep: List[np.float64] = []
+            min_eigenvalue: List[np.float64] = []
+            max_eigenvalue: List[np.float64] = []
+            barrier_value: List[np.float64] = []
+            gradient_norm: List[np.float64] = []
+            backtracking_iter: List[np.float64] = []
+            
+            for i in range(self.epochs_predictor_multistep):
+                data_loader = data.DataLoader(
+                    predictor_dataset, self.batch_size, shuffle=True, drop_last=True
+                )
+                total_loss = 0
+                max_grad = 0
+
+                #because of validation
+                self._predictor.train()
+
+                for batch_idx, batch in enumerate(data_loader):
+                    self._predictor.zero_grad()
+
+                    # Initialize predictor with state of initializer network
+                    _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
+
+                    #hopefully more understandable:
+                    # as we initialize the hiddenstate of the RNN we need to initialize
+                    # the internal state of the _diskretized_linear the first computation
+                    # of the error can be omitted for this since we can expect that the
+                    # initial state as no error 
+
+                    #we need only the last point of the x0 sequence for init of the linear
+                    init_control = batch['x0_control'].float().to(self.device)[:,-1:,:]
+                    init_state = batch['x0_states'].float().to(self.device)[:,-1:,:]
+                    init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
-                        input_forces=in_lin,
-                        states=corr_state_denorm
-                        )
+                        input_forces= init_input,
+                        states=init_state,
+                        residual_errors= 0)
                     
-                    #this is functionally the same as out_lin = lin_states but is good for understanding
-                    #and in case there is direct feedtrough it becomes important but then also needs an extra
-                    #network to correct the direct feedthrough
-                    output = self._diskretized_linear.calc_output(
-                        states= corr_state_denorm
-                    )
-                    output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-                    outputs.append(output_normed)
+                    #get all inputs
+                    if self.RNNinputnetbool:
+                        control_ = self._inputRNNnet.forward(batch['control'].float().to(self.device))
+                    else:
+                        control_ =batch['control'].float().to(self.device)
+                    control_lin =batch['control'].float().to(self.device)
+                    input_lin = self._inputnet.forward(control_lin)
+                    x = None
+                    
+                    outputs =[]
+                    #get the sequence dimension, sanity check: is sequence length?
+                    seq_len = control_.size(dim=1)
+                    for seq_step in range(seq_len):
+                        #seq_step:seq_step+1 preserves the original dimensionality
+                        in_lin = input_lin[:,seq_step:seq_step+1,:]
+                        control_in = control_[:,seq_step:seq_step+1,:]
+                        
+                        #just for me (represents the timestep such that x(k+1) becomes x(k))
+                        lin_in_rnn = states_next
+                        
+                        #normalize the out_lin
+                        out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
+                        rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
+                        if self.forward_alt_bool:
+                            res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
+                        else:
+                            res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
+                        res_error = res_error.to(self.device)
+                        # hx has a very wierd format and is not the same as the output x
+                        x = [[x[0],x[0]]]
+                        corr_state = out_lin_norm+res_error
 
-                outputs_tensor = torch.cat(outputs, dim=1)
-                barrier = self._predictor.get_barrier(t).to(self.device)
-
-                true_state = batch['states'].float().to(self.device)
-                # test1 =outputs_tensor
-                # test2 =true_state
-
-                #loss calculation, when weights are all 1, they are equivalent    
-                if loss_weights is None:
-                    batch_loss = self.loss.forward(
-                        outputs_tensor, true_state
-                    )
-                else:
-                    batch_loss = torch.mean(
-                        ((true_state - outputs_tensor) ** 2) * loss_weights
+                        #denormalize the corrected state and use it as new state for the linear
+                        corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                        
+                        #this takes the denormalized corrected state as input
+                        states_next = self._diskretized_linear.forward(
+                            input_forces=in_lin,
+                            states=corr_state_denorm
+                            )
+                        
+                        #this is functionally the same as out_lin = lin_states but is good for understanding
+                        #and in case there is direct feedtrough it becomes important but then also needs an extra
+                        #network to correct the direct feedthrough
+                        output = self._diskretized_linear.calc_output(
+                            states= corr_state_denorm
                         )
+                        output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+                        outputs.append(output_normed)
 
-                total_loss += batch_loss.item()
-                (batch_loss + barrier).backward()
 
-                #stuff for constraint checking
-                ################
-                # gradient infos
-                grads_norm = [
-                    torch.linalg.norm(p.grad)
-                    for p in filter(
-                        lambda p: p.grad is not None, self._predictor.parameters()
-                    )
-                ]
-                max_grad += max(grads_norm)
+                    outputs_tensor = torch.cat(outputs, dim=1)
+                    barrier = self._predictor.get_barrier(t).to(self.device)
 
-                # save old parameter set
-                old_pars = [
-                    par.clone().detach() for par in self._predictor.parameters()
-                ]
-                ################
+                    true_state = batch['states'].float().to(self.device)
+                    # test1 =outputs_tensor
+                    # test2 =true_state
 
-                self.optimizer_pred_multistep.step()
-                ########################### 
-                #Constraints Checking
-                #################################
-                # perform backtracking line search if constraints are not satisfied
-                max_iter = 100
-                alpha = 0.5
-                bls_iter = 0
-                while not self._predictor.check_constr():
-                    for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-                        new_par.data = (
-                            alpha * old_par.clone() + (1 - alpha) * new_par.data
+                    #loss calculation, when weights are all 1, they are equivalent    
+                    if loss_weights is None:
+                        batch_loss = self.loss.forward(
+                            outputs_tensor, true_state
                         )
+                    else:
+                        batch_loss = torch.mean(
+                            ((true_state - outputs_tensor) ** 2) * loss_weights
+                            )
 
-                    if bls_iter > max_iter - 1:
-                        for old_par, new_par in zip(
-                            old_pars, self._predictor.parameters()
-                        ):
-                            new_par.data = old_par.clone()
-                        M = self._predictor.get_constraints()
-                        logger.warning(
-                            f'Epoch {i+1}/{self.epochs_predictor_multistep}\t'
-                            f'max real eigenvalue of M: '
-                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-                            f'Backtracking line search exceeded maximum iteration. \t'
-                            f'Constraints satisfied? {self._predictor.check_constr()}'
+                    total_loss += batch_loss.item()
+                    (batch_loss + barrier).backward()
+
+                    #stuff for constraint checking
+                    ################
+                    # gradient infos
+                    grads_norm = [
+                        torch.linalg.norm(p.grad)
+                        for p in filter(
+                            lambda p: p.grad is not None, self._predictor.parameters()
                         )
-                        time_end_pred = time.time()
-                        time_total_init = time_end_init - time_start_init
-                        time_total_pred = time_end_pred - time_start_pred
+                    ]
+                    max_grad += max(grads_norm)
 
-                        #Trainings that ended here seemed to result in worse models,
-                        # also it circumvents the validation so it wont check if an earlier
-                        # epoch was better => let it break the training here  
-                        stop_train = True
+                    # save old parameter set
+                    old_pars = [
+                        par.clone().detach() for par in self._predictor.parameters()
+                    ]
+                    ################
+
+                    self.optimizer_pred_multistep.step()
+                    ########################### 
+                    #Constraints Checking
+                    #################################
+                    # perform backtracking line search if constraints are not satisfied
+                    max_iter = 100
+                    alpha = 0.5
+                    bls_iter = 0
+                    while not self._predictor.check_constr():
+                        for old_par, new_par in zip(old_pars, self._predictor.parameters()):
+                            new_par.data = (
+                                alpha * old_par.clone() + (1 - alpha) * new_par.data
+                            )
+
+                        if bls_iter > max_iter - 1:
+                            for old_par, new_par in zip(
+                                old_pars, self._predictor.parameters()
+                            ):
+                                new_par.data = old_par.clone()
+                            M = self._predictor.get_constraints()
+                            logger.warning(
+                                f'Epoch {i+1}/{self.epochs_predictor_multistep}\t'
+                                f'max real eigenvalue of M: '
+                                f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
+                                f'Backtracking line search exceeded maximum iteration. \t'
+                                f'Constraints satisfied? {self._predictor.check_constr()}'
+                            )
+                            time_end_pred = time.time()
+                            time_total_init = time_end_init - time_start_init
+                            time_total_pred = time_end_pred - time_start_pred
+
+                            #Trainings that ended here seemed to result in worse models,
+                            # also it circumvents the validation so it wont check if an earlier
+                            # epoch was better => let it break the training here  
+                            stop_train = True
+                            break
+
+                            return dict(
+                                index=np.asarray(i),
+                                epoch_loss_initializer=np.asarray(initializer_loss),
+                                epoch_loss_predictor=np.asarray(predictor_loss),
+                                epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+                                inputfnn_losses=np.asarray(inputfnn_losses),
+                                barrier_value=np.asarray(barrier_value),
+                                backtracking_iter=np.asarray(backtracking_iter),
+                                gradient_norm=np.asarray(gradient_norm),
+                                max_eigenvalue=np.asarray(max_eigenvalue),
+                                min_eigenvalue=np.asarray(min_eigenvalue),
+                                training_time_initializer=np.asarray(time_total_init),
+                                training_time_predictor=np.asarray(time_total_pred),
+                                #validation
+                                inputfnn_val_loss=np.array(inputfnn_validation_losses, dtype=np.float64), 
+                                inputfnn_best_epoch = inputfnn_best_epoch, 
+                                inputfnn_best_val_loss = inputfnn_best_val_loss.item(),
+                                predictor_val_loss=np.array(predictor_validation_losses, dtype=np.float64), 
+                                predictor_best_epoch = predictor_best_epoch, 
+                                predictor_best_val_loss = predictor_best_val_loss.item(),
+                                predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64), 
+                                predictor_multistep_best_epoch = predictor_multistep_best_epoch, 
+                                predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
+                            )
+                        bls_iter += 1
+
+                    if stop_train:
                         break
-
-                        return dict(
-                            index=np.asarray(i),
-                            epoch_loss_initializer=np.asarray(initializer_loss),
-                            epoch_loss_predictor=np.asarray(predictor_loss),
-                            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
-                            inputfnn_losses=np.asarray(inputfnn_losses),
-                            barrier_value=np.asarray(barrier_value),
-                            backtracking_iter=np.asarray(backtracking_iter),
-                            gradient_norm=np.asarray(gradient_norm),
-                            max_eigenvalue=np.asarray(max_eigenvalue),
-                            min_eigenvalue=np.asarray(min_eigenvalue),
-                            training_time_initializer=np.asarray(time_total_init),
-                            training_time_predictor=np.asarray(time_total_pred),
-                            #validation
-                            inputfnn_val_loss=np.array(inputfnn_validation_losses, dtype=np.float64), 
-                            inputfnn_best_epoch = inputfnn_best_epoch, 
-                            inputfnn_best_val_loss = inputfnn_best_val_loss.item(),
-                            predictor_val_loss=np.array(predictor_validation_losses, dtype=np.float64), 
-                            predictor_best_epoch = predictor_best_epoch, 
-                            predictor_best_val_loss = predictor_best_val_loss.item(),
-                            predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64), 
-                            predictor_multistep_best_epoch = predictor_multistep_best_epoch, 
-                            predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
-                        )
-                    bls_iter += 1
-
                 if stop_train:
                     break
-            if stop_train:
-                break
-            ########################### 
-            #main validation check for overfitt prevention
-            #################################
-            with torch.no_grad():
-                self._predictor.eval() #this is very important (i think to disable the dropout layers)
+                ########################### 
+                #main validation check for overfitt prevention
+                #################################
+                with torch.no_grad():
+                    self._predictor.eval() #this is very important (i think to disable the dropout layers)
 
-                #do the whole validation dataset at once
-                states = torch.from_numpy(predictor_dataset_vali.states)
-                control = torch.from_numpy(predictor_dataset_vali.control)
-                x0 = torch.from_numpy(predictor_dataset_vali.x0)
-                control_prev = torch.from_numpy(predictor_dataset_vali.control_prev)
-                states_prev = torch.from_numpy(predictor_dataset_vali.states_prev)
-                x0_control = torch.from_numpy(predictor_dataset_vali.x0_control)
-                x0_states = torch.from_numpy(predictor_dataset_vali.x0_states)
+                    #do the whole validation dataset at once
+                    states = torch.from_numpy(predictor_dataset_vali.states)
+                    control = torch.from_numpy(predictor_dataset_vali.control)
+                    x0 = torch.from_numpy(predictor_dataset_vali.x0)
+                    control_prev = torch.from_numpy(predictor_dataset_vali.control_prev)
+                    states_prev = torch.from_numpy(predictor_dataset_vali.states_prev)
+                    x0_control = torch.from_numpy(predictor_dataset_vali.x0_control)
+                    x0_states = torch.from_numpy(predictor_dataset_vali.x0_states)
 
-                # Initialize predictor with state of initializer network
-                _, hx = self._initializer.forward(x0.float().to(self.device))
+                    # Initialize predictor with state of initializer network
+                    _, hx = self._initializer.forward(x0.float().to(self.device))
 
-                #we need only the last point of the x0 sequence for init of the linear
-                init_control = x0_control.float().to(self.device)[:,-1:,:]
-                init_state = x0_states.float().to(self.device)[:,-1:,:]
-                init_input = self._inputnet.forward(init_control)
-                states_next = self._diskretized_linear.forward(
-                    input_forces= init_input,
-                    states=init_state,
-                    residual_errors= 0)
-                
-                #get all inputs
-                if self.RNNinputnetbool:
-                    control_ = self._inputRNNnet.forward(control.float().to(self.device))
-                else:
-                    control_ =control.float().to(self.device)
-
-                control_lin =control.float().to(self.device)
-                input_lin = self._inputnet.forward(control_lin)
-                x = None
-                 
-                outputs =[]
-                #get the sequence dimension, sanity check: is sequence length?
-                seq_len = control_.size(dim=1)
-                for seq_step in range(seq_len):
-                    #seq_step:seq_step+1 preserves the original dimensionality
-                    in_lin = input_lin[:,seq_step:seq_step+1,:]
-                    control_in = control_[:,seq_step:seq_step+1,:]
-                    
-                    #just for me (represents the timestep such that x(k+1) becomes x(k))
-                    lin_in_rnn = states_next
-                    
-                    #normalize the out_lin
-                    out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                    rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
-                    if self.forward_alt_bool:
-                        res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
-                    else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                    res_error = res_error.to(self.device)
-                    # hx has a very wierd format and is not the same as the output x
-                    x = [[x[0],x[0]]]
-                    corr_state = out_lin_norm+res_error
-
-                    #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                    #we need only the last point of the x0 sequence for init of the linear
+                    init_control = x0_control.float().to(self.device)[:,-1:,:]
+                    init_state = x0_states.float().to(self.device)[:,-1:,:]
+                    init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
-                        input_forces=in_lin,
-                        states=corr_state_denorm
-                        )
+                        input_forces= init_input,
+                        states=init_state,
+                        residual_errors= 0)
                     
-                    #this is functionally the same as out_lin = lin_states but is good for understanding
-                    #and in case there is direct feedtrough it becomes important but then also needs an extra
-                    #network to correct the direct feedthrough
-                    output = self._diskretized_linear.calc_output(
-                        states= corr_state_denorm
-                    )
-                    output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-                    outputs.append(output_normed)                    
+                    #get all inputs
+                    if self.RNNinputnetbool:
+                        control_ = self._inputRNNnet.forward(control.float().to(self.device))
+                    else:
+                        control_ =control.float().to(self.device)
 
-                outputs_tensor = torch.cat(outputs, dim=1)
-                barrier = self._predictor.get_barrier(t).to(self.device)
+                    control_lin =control.float().to(self.device)
+                    input_lin = self._inputnet.forward(control_lin)
+                    x = None
+                    
+                    outputs =[]
+                    #get the sequence dimension, sanity check: is sequence length?
+                    seq_len = control_.size(dim=1)
+                    for seq_step in range(seq_len):
+                        #seq_step:seq_step+1 preserves the original dimensionality
+                        in_lin = input_lin[:,seq_step:seq_step+1,:]
+                        control_in = control_[:,seq_step:seq_step+1,:]
+                        
+                        #just for me (represents the timestep such that x(k+1) becomes x(k))
+                        lin_in_rnn = states_next
+                        
+                        #normalize the out_lin
+                        out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-                true_state = states.float().to(self.device)
-                # test1 =outputs_tensor
-                # test2 =true_state
+                        rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
+                        if self.forward_alt_bool:
+                            res_error, x = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=x)
+                        else:
+                            res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
+                        res_error = res_error.to(self.device)
+                        # hx has a very wierd format and is not the same as the output x
+                        x = [[x[0],x[0]]]
+                        corr_state = out_lin_norm+res_error
 
-                #loss calculation, when weights are all 1, they are equivalent    
-                if loss_weights is None:
-                    validation_loss = self.loss.forward(
-                        outputs_tensor, true_state
-                    )
-                else:
-                    validation_loss = torch.mean(
-                        ((true_state - outputs_tensor) ** 2) * loss_weights
+                        #denormalize the corrected state and use it as new state for the linear
+                        corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+                        states_next = self._diskretized_linear.forward(
+                            input_forces=in_lin,
+                            states=corr_state_denorm
+                            )
+                        
+                        #this is functionally the same as out_lin = lin_states but is good for understanding
+                        #and in case there is direct feedtrough it becomes important but then also needs an extra
+                        #network to correct the direct feedthrough
+                        output = self._diskretized_linear.calc_output(
+                            states= corr_state_denorm
                         )
+                        output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+                        outputs.append(output_normed)                    
 
-                if validation_loss < predictor_multistep_best_val_loss:
-                    # If it is, save the model parameters
-                    torch.save(self._predictor.state_dict(), 'best_model_params.pth')
-                    # Update the best validation loss
-                    predictor_multistep_best_val_loss = validation_loss
-                    predictor_multistep_best_epoch = i
+                    outputs_tensor = torch.cat(outputs, dim=1)
+                    barrier = self._predictor.get_barrier(t).to(self.device)
 
-            ########################### 
-            #Epoch Wrapup
-            #################################
-            # decay t following the idea of interior point methods
-            if i % self.epochs_with_const_decay == 0 and i != 0:
-                t = t * 1 / self.decay_rate
-                logger.info(f'Decay t by {self.decay_rate} \t' f't: {t:1f}')
+                    true_state = states.float().to(self.device)
+                    # test1 =outputs_tensor
+                    # test2 =true_state
 
-            min_ev = np.float64('inf')
-            max_ev = np.float64('inf')
-            if self.log_min_max_real_eigenvalues:
-                min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
+                    #loss calculation, when weights are all 1, they are equivalent    
+                    if loss_weights is None:
+                        validation_loss = self.loss.forward(
+                            outputs_tensor, true_state
+                        )
+                    else:
+                        validation_loss = torch.mean(
+                            ((true_state - outputs_tensor) ** 2) * loss_weights
+                            )
 
-            logger.info(
-                f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
-                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
-                f'Barrier: {barrier:1f}\t'
-                f'Backtracking Line Search iteration: {bls_iter}\t'
-                f'Max accumulated gradient norm: {max_grad:1f}'
-            )
-            print(
-                f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
-                f'Total Loss (Predictor Multistep): {total_loss:1f} \t'
-                f'Barrier: {barrier:1f}\t'
-                f'Backtracking Line Search iteration: {bls_iter}\t'
-                f'Max accumulated gradient norm: {max_grad:1f}'
-            )
-            predictor_loss_multistep.append([i,np.float64(total_loss)])
-            barrier_value.append(barrier.cpu().detach().numpy())
-            backtracking_iter.append(np.float64(bls_iter))
-            gradient_norm.append(np.float64(max_grad))
-            max_eigenvalue.append(np.float64(max_ev))
-            min_eigenvalue.append(np.float64(min_ev))
+                    if validation_loss < predictor_multistep_best_val_loss:
+                        # If it is, save the model parameters
+                        torch.save(self._predictor.state_dict(), 'best_model_params.pth')
+                        # Update the best validation loss
+                        predictor_multistep_best_val_loss = validation_loss
+                        predictor_multistep_best_epoch = i
 
-            #validation
-            validation_loss_ = validation_loss.item()
-            predictor_multistep_validation_losses.append([i, validation_loss_])
+                ########################### 
+                #Epoch Wrapup
+                #################################
+                # decay t following the idea of interior point methods
+                if i % self.epochs_with_const_decay == 0 and i != 0:
+                    t = t * 1 / self.decay_rate
+                    logger.info(f'Decay t by {self.decay_rate} \t' f't: {t:1f}')
 
-            if patience < (i-predictor_multistep_best_epoch):
-                print("early stopping")
-                break
+                min_ev = np.float64('inf')
+                max_ev = np.float64('inf')
+                if self.log_min_max_real_eigenvalues:
+                    min_ev, max_ev = self._predictor.get_min_max_real_eigenvalues()
+
+                loss_average = total_loss/(len(data_loader))
+
+                logger.info(
+                    f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
+                    f'Total Loss (Predictor Multistep): {loss_average:1f} \t'
+                    f'Barrier: {barrier:1f}\t'
+                    f'Backtracking Line Search iteration: {bls_iter}\t'
+                    f'Max accumulated gradient norm: {max_grad:1f}'
+                )
+                print(
+                    f'Epoch {i + 1}/{self.epochs_predictor_multistep}\t'
+                    f'Total Loss (Predictor Multistep): {loss_average:1f} \t'
+                    f'Barrier: {barrier:1f}\t'
+                    f'Backtracking Line Search iteration: {bls_iter}\t'
+                    f'Max accumulated gradient norm: {max_grad:1f}'
+                )
+                predictor_loss_multistep.append([i,np.float64(loss_average)])
+                barrier_value.append(barrier.cpu().detach().numpy())
+                backtracking_iter.append(np.float64(bls_iter))
+                gradient_norm.append(np.float64(max_grad))
+                max_eigenvalue.append(np.float64(max_ev))
+                min_eigenvalue.append(np.float64(min_ev))
+
+                #validation
+                validation_loss_ = validation_loss.item()
+                predictor_multistep_validation_losses.append([i, validation_loss_])
+
+                if patience < (i-predictor_multistep_best_epoch):
+                    print("early stopping")
+                    break
 
         #load the best parameters with best validation loss (early stopping)
         self._predictor.load_state_dict(torch.load('best_model_params.pth'))
