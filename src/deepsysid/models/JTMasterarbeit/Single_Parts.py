@@ -2058,6 +2058,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #multi-step training
         #################################
         self._inputnet.eval()
+
+        #break training loop if constraint is failed 
+        # (will then fall back to last validation checkpoint)
+        stop_train = False
                 
         #reset optimizer
         if self.RNNinputnetbool:
