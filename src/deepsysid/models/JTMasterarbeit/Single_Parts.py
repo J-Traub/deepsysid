@@ -1611,8 +1611,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         predictor_best_val_loss = torch.tensor(float('inf'))
         predictor_best_epoch = 0
         predictor_validation_losses = []
-        predictor_multistep_best_val_loss = torch.tensor(float('inf'))
-        predictor_multistep_best_epoch = 0
+        predictor_multistep_best_val_loss = torch.full((len(self.sequence_length_list),), float('inf'))
+        predictor_multistep_best_epoch =  [0] * len(self.sequence_length_list)
         predictor_multistep_validation_losses = []
 
         #Initializer training
@@ -2080,7 +2080,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #   by the change of the loss due to different sequence length
         #       => sequence length does not effect loss but the sumation 
         #          over all batches without division over the number of batches does
-        for seq_len in self.sequence_length_list:
+        for index, seq_len in enumerate(self.sequence_length_list):
             #break training loop if constraint is failed 
             # (will then fall back to last validation checkpoint)
             stop_train = False
@@ -2395,12 +2395,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             ((true_state - outputs_tensor) ** 2) * loss_weights
                             )
 
-                    if validation_loss < predictor_multistep_best_val_loss:
+                    if validation_loss < predictor_multistep_best_val_loss[index]:
                         # If it is, save the model parameters
                         torch.save(self._predictor.state_dict(), 'best_model_params.pth')
                         # Update the best validation loss
-                        predictor_multistep_best_val_loss = validation_loss
-                        predictor_multistep_best_epoch = i
+                        predictor_multistep_best_val_loss[index] = validation_loss
+                        predictor_multistep_best_epoch[index] = i
 
                 ########################### 
                 #Epoch Wrapup
@@ -2442,7 +2442,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 validation_loss_ = validation_loss.item()
                 predictor_multistep_validation_losses.append([i, validation_loss_])
 
-                if patience < (i-predictor_multistep_best_epoch):
+                if patience < (i-predictor_multistep_best_epoch[index]):
                     print("early stopping")
                     break
 
@@ -2475,8 +2475,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             predictor_best_val_loss = predictor_best_val_loss.item(),
             epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
             predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64),
-            predictor_multistep_best_epoch = predictor_multistep_best_epoch,  
-            predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
+            predictor_multistep_best_epoch = np.array(predictor_multistep_best_epoch),  
+            predictor_multistep_best_val_loss = np.array(predictor_multistep_best_val_loss.cpu().detach().numpy()),
             training_time_predictor=np.asarray(time_total_pred),
             barrier_value=np.asarray(barrier_value),
             backtracking_iter=np.asarray(backtracking_iter),
