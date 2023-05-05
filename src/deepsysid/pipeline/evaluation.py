@@ -59,14 +59,17 @@ def evaluate_model(
     results: Dict[
         int, Dict[str, Tuple[NDArray[np.float64], Dict[str, NDArray[np.float64]]]]
     ] = dict()
-    for horizon_size in range(1, config.horizon_size + 1):
-        results[horizon_size] = dict()
-        for name, metric in metrics.items():
-            score, meta = metric.measure(
-                y_true=[t[:horizon_size] for t in true],
-                y_pred=[p[:horizon_size] for p in pred],
-            )
-            results[horizon_size][name] = (score, meta)
+
+    # for horizon_size in range(1, config.horizon_size + 1):
+    # just do the full horizon
+    horizon_size = config.horizon_size
+    results[horizon_size] = dict()
+    for name, metric in metrics.items():
+        score, meta = metric.measure(
+            y_true=[t[:horizon_size] for t in true],
+            y_pred=[p[:horizon_size] for p in pred],
+        )
+        results[horizon_size][name] = (score, meta)
 
     scores_file_path = os.path.join(
         result_directory,

@@ -1,226 +1,160 @@
-import abc
+import copy
+import json
 import logging
-import warnings
-from typing import List, Optional, Tuple
+import time
+from typing import Dict, List, Literal, Optional, Tuple, Union
 
-import cvxpy as cp
 import numpy as np
 import torch
-import torch.nn.functional as F
+from numpy.typing import NDArray
+from pydantic import BaseModel
 from torch import nn
-
+import torch.optim as optim
+import torch.utils.data as data
+from torch.nn import functional as F
+from .. import utils
+from ...networks import loss, rnn
+from ...networks.rnn import HiddenStateForwardModule
+from ...networks.rnn import LtiRnnConvConstr
+from .. import base, utils
+from ..base import DynamicIdentificationModelConfig
+from ..datasets import RecurrentHybridPredictorDataset,RecurrentInitializerDataset, RecurrentPredictorDataset,FixedWindowDataset
+import cvxpy as cp
 import torch.jit as jit
+
 
 logger = logging.getLogger(__name__)
 
+#TODO: make all of them jit
+class InputNet(nn.Module):
+    def __init__(self, dropout: float):
+        super(InputNet, self).__init__()
+        self.fc1 = nn.Linear(6, 32)  # 6 input features, 32 output features
+        self.fc2 = nn.Linear(32, 64)  # 32 input features, 64 output features
+        # self.fc3 = nn.Linear(64, 4)  # 64 input features, 4 output features
+        self.fc3 = nn.Linear(64, 128)  # 64 input features, 128 output features
+        self.fc4 = nn.Linear(128, 64)  # 128 input features, 64 output features
+        self.fc5 = nn.Linear(64, 4)  # 64 input features, 4 output features
 
-class HiddenStateForwardModule(nn.Module, metaclass=abc.ABCMeta):
-    @abc.abstractmethod
-    def forward(
-        self,
-        x_pred: torch.Tensor,
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        pass
+        self.relu = nn.ReLU()  # activation function
+        self.dropout = nn.Dropout(dropout)  # dropout regularization
 
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc3(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc4(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc5(x)
+        return x
+    
+#TODO LayerNorm normalises across all features 
+# so it might normalise each point in the sequence
+# which would kinda go against the inteded purpose
+class InputRNNNet(nn.Module):
+    def __init__(self, dropout: float, control_dim: int):
+        super(InputRNNNet, self).__init__()
+        self.fc1 = nn.Linear(control_dim, 32)  # 6 input features, 32 output features
+        self.fc2 = nn.Linear(32, 64)  # 32 input features, 64 output features
+        self.fc3 = nn.Linear(64, control_dim)  # 64 input features, 4 output features
 
-class BasicLSTM(HiddenStateForwardModule):
+        self.relu = nn.ReLU()  # activation function
+        self.dropout = nn.Dropout(dropout)  # dropout regularization
+
+        # LayerNorm
+        self.norm1 = nn.LayerNorm(32)
+        self.norm2 = nn.LayerNorm(64)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        # x = self.dropout(x)
+        x = self.norm1(x)  # apply layer normalization
+        x = self.fc2(x)
+        x = self.relu(x)
+        # x = self.dropout(x)
+        x = self.norm2(x)  # apply layer normalization
+        x = self.fc3(x)
+        return x
+
+class DiskretizedLinear(nn.Module):
     def __init__(
         self,
-        input_dim: int,
-        recurrent_dim: int,
-        num_recurrent_layers: int,
-        output_dim: List[int],
-        dropout: float,
+        Ad: List[List[np.float64]],
+        Bd: List[List[np.float64]],
+        Cd: List[List[np.float64]],
+        Dd: List[List[np.float64]],
+        ssv_input: List[np.float64],
+        ssv_states: List[np.float64],
     ):
         super().__init__()
 
-        self.num_recurrent_layers = num_recurrent_layers
-        self.recurrent_dim = recurrent_dim
 
-        with warnings.catch_warnings():
-            self.predictor_lstm = nn.LSTM(
-                input_size=input_dim,
-                hidden_size=recurrent_dim,
-                num_layers=num_recurrent_layers,
-                dropout=dropout,
-                batch_first=True,
-            )
+        self.Ad = nn.Parameter(torch.tensor(Ad).squeeze().float())
+        self.Ad.requires_grad = False
+        self.Bd = nn.Parameter(torch.tensor(Bd).squeeze().float())
+        self.Bd.requires_grad = False
+        self.Cd = nn.Parameter(torch.tensor(Cd).squeeze().float())
+        self.Cd.requires_grad = False
+        self.Dd = nn.Parameter(torch.tensor(Dd).squeeze().float())
+        self.Dd.requires_grad = False
+        self.ssv_input = nn.Parameter(torch.tensor(ssv_input).squeeze().float())
+        self.ssv_input.requires_grad = False
+        self.ssv_states = nn.Parameter(torch.tensor(ssv_states).squeeze().float())
+        self.ssv_states.requires_grad = False
 
-        layer_dim = [recurrent_dim] + output_dim
-        self.out = nn.ModuleList(
-            [
-                nn.Linear(in_features=layer_dim[i - 1], out_features=layer_dim[i])
-                for i in range(1, len(layer_dim))
-            ]
-        )
+    def forward(self, 
+                input_forces: torch.Tensor,
+                states: torch.Tensor ,
+                residual_errors: torch.Tensor = 0
+                ) -> torch.Tensor:
+        #calculates x_(k+1) = Ad*x_k + Bd*u_k + Ad*e_k
+        #           with x_corr_k = x_k+e_k the residual error corrected state
+        #           y_k = x_k
+        #and shifts input, and output to fit with the actual system
 
-        for name, param in self.predictor_lstm.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_normal_(param)
+        #shift the input to the linearized input
+        delta_in = input_forces - self.ssv_input
+        #add the correction calculated by the RNN to the state
+        # can be seen as additional input with Ad matrix as input Matrix
+        states_corr = states + residual_errors
+        #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
+        delta_states_corr = states_corr - self.ssv_states
+        #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
+        #for compatability with torch batches we transpose the equation
+        delta_states_next = torch.matmul(delta_states_corr, self.Ad.transpose(0,1)) + torch.matmul(delta_in, self.Bd.transpose(0,1)) 
+        #shift the linearized states back to the states
+        states_next = delta_states_next + self.ssv_states
+        #dont calculate y here, rather outside since else the calculation order might be wierd
+        return states_next
+    
+    def calc_output(self, 
+            states: torch.Tensor,
+            input_forces: torch.Tensor = None,
+            ) -> torch.Tensor:
+        """Has no real function yet and just gives out the states but in case of a
+        system with direct feedtrough or where C is not Identity it is better
+        and cleaner. Represents the general Output of a linear system:
+            y=C*x+D*u.
 
-        for layer in self.out:
-            nn.init.xavier_normal_(layer.weight)
+        Args:
+            states (torch.Tensor): current state of the diskretized linear model
+            input_forces (torch.Tensor, optional): control input forces. Defaults to None.
+        
+        Returns:
+            torch.Tensor: current output of the diskretized linear model
+        """
+        y = states
 
-    def forward(
-        self,
-        x_pred: torch.Tensor,
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        x, (h0, c0) = self.predictor_lstm(x_pred, hx)
-        for layer in self.out[:-1]:
-            x = F.relu(layer(x))
-        x = self.out[-1](x)
-
-        return x, (h0, c0)
-
-
-class BasicRnn(HiddenStateForwardModule):
-    def __init__(
-        self,
-        input_dim: int,
-        recurrent_dim: int,
-        num_recurrent_layers: int,
-        output_dim: int,
-        dropout: float,
-        bias: bool,
-    ) -> None:
-        super().__init__()
-
-        self.num_recurrent_layers = num_recurrent_layers
-        self.recurrent_dim = recurrent_dim
-
-        self.predictor_rnn = nn.RNN(
-            input_size=input_dim,
-            hidden_size=recurrent_dim,
-            num_layers=num_recurrent_layers,
-            dropout=dropout,
-            bias=bias,
-            batch_first=True,
-        )
-
-        self.out = nn.Linear(
-            in_features=recurrent_dim, out_features=output_dim, bias=bias
-        )
-
-    def forward(
-        self,
-        x_pred: torch.Tensor,
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        n_batch, _, _ = x_pred.shape
-
-        if hx is not None:
-            x = hx[0]
-        else:
-            x = torch.zeros((n_batch, self.recurrent_dim))
-
-        h, _ = self.predictor_rnn(x_pred, x)
-        return self.out(h), h
-
-
-class LinearOutputLSTM(HiddenStateForwardModule):
-    def __init__(
-        self,
-        input_dim: int,
-        recurrent_dim: int,
-        num_recurrent_layers: int,
-        output_dim: int,
-        dropout: float,
-    ):
-        super().__init__()
-
-        self.num_recurrent_layers = num_recurrent_layers
-        self.recurrent_dim = recurrent_dim
-
-        with warnings.catch_warnings():
-            self.predictor_lstm = nn.LSTM(
-                input_size=input_dim,
-                hidden_size=recurrent_dim,
-                num_layers=num_recurrent_layers,
-                dropout=dropout,
-                batch_first=True,
-            )
-
-        self.out = nn.Linear(
-            in_features=recurrent_dim, out_features=output_dim, bias=False
-        )
-
-        for name, param in self.predictor_lstm.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_normal_(param)
-
-        nn.init.xavier_normal_(self.out.weight)
-
-    def forward(
-        self,
-        x_pred: torch.Tensor,
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        x, (h0, c0) = self.predictor_lstm.forward(x_pred, hx)
-        x = self.out.forward(x)
-
-        return x, (h0, c0)
-
-
-class LtiRnn(HiddenStateForwardModule):
-    def __init__(
-        self,
-        nx: int,
-        nu: int,
-        ny: int,
-        nw: int,
-    ) -> None:
-        super(LtiRnn, self).__init__()
-
-        self.nx = nx  # number of states
-        self.nu = nu  # number of performance (external) input
-        self.nw = nw  # number of disturbance input
-        self.ny = ny  # number of performance output
-        self.nz = nw  # number of disturbance output, always equal to size of w
-
-        self.nl = torch.tanh
-
-        self.Y = torch.nn.Parameter(torch.eye(self.nx))
-
-        self.A_tilde = torch.nn.Linear(self.nx, self.nx, bias=False)
-        self.B1_tilde = torch.nn.Linear(self.nu, self.nx, bias=False)
-        self.B2_tilde = torch.nn.Linear(self.nw, self.nx, bias=False)
-        self.C1 = torch.nn.Linear(self.nx, self.ny, bias=False)
-        self.D11 = torch.nn.Linear(self.nu, self.ny, bias=False)
-        self.D12 = torch.nn.Linear(self.nw, self.ny, bias=False)
-        self.C2_tilde = torch.nn.Linear(self.nx, self.nz, bias=False)
-        self.D21_tilde = torch.nn.Linear(self.nu, self.nz, bias=False)
-
-        self.lambdas = torch.nn.Parameter(torch.ones((self.nw, 1)))
-
-    def forward(
-        self,
-        x_pred: torch.Tensor,
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        n_batch, n_sample, _ = x_pred.shape
-
-        Y_inv = self.Y.inverse()
-        T_inv = torch.diag(1 / torch.squeeze(self.lambdas))
-
-        # initialize output
-        y = torch.zeros((n_batch, n_sample, self.ny))
-        if hx is not None:
-            x = hx[0][1]
-        else:
-            x = torch.zeros((n_batch, self.nx))
-
-        for k in range(n_sample):
-            z = (self.C2_tilde(x) + self.D21_tilde(x_pred[:, k, :])) @ T_inv
-            w = self.nl(z)
-            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w)
-            x = (
-                self.A_tilde(x) + self.B1_tilde(x_pred[:, k, :]) + self.B2_tilde(w)
-            ) @ Y_inv
-
-        return y, (x, x)
-
+        return y
+    
 
 class LtiRnnConvConstr(jit.ScriptModule):
     def __init__(
@@ -557,7 +491,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         M = self.get_constraints()
         barrier = -t * (-M).logdet()
 
-        _, info = torch.linalg.cholesky_ex(-M)
+        _, info = torch.linalg.cholesky_ex(-M.cpu())
 
         if info > 0:
             barrier += torch.tensor(float('inf'))
@@ -568,7 +502,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         with torch.no_grad():
             M = self.get_constraints()
 
-            _, info = torch.linalg.cholesky_ex(-M)
+            _, info = torch.linalg.cholesky_ex(-M.cpu())
 
             if info > 0:
                 b_satisfied = False
@@ -580,63 +514,6 @@ class LtiRnnConvConstr(jit.ScriptModule):
     def get_min_max_real_eigenvalues(self) -> Tuple[np.float64, np.float64]:
         M = self.get_constraints()
         return (
-            torch.min(torch.real(torch.linalg.eigh(M)[0])).cpu().detach().numpy(),
-            torch.max(torch.real(torch.linalg.eigh(M)[0])).cpu().detach().numpy(),
+            torch.min(torch.real(torch.linalg.eig(M)[0])).cpu().detach().numpy(),
+            torch.max(torch.real(torch.linalg.eig(M)[0])).cpu().detach().numpy(),
         )
-
-
-class InitLSTM(nn.Module):
-    def __init__(
-        self,
-        input_dim: int,
-        recurrent_dim: int,
-        num_recurrent_layers: int,
-        output_dim: int,
-        dropout: float,
-    ):
-        super().__init__()
-
-        self.num_recurrent_layers = num_recurrent_layers
-        self.recurrent_dim = recurrent_dim
-
-        with warnings.catch_warnings():
-            self.init_lstm = nn.LSTM(
-                input_size=input_dim + output_dim,
-                hidden_size=recurrent_dim,
-                num_layers=num_recurrent_layers,
-                dropout=dropout,
-                batch_first=True,
-            )
-
-            self.predictor_lstm = nn.LSTM(
-                input_size=input_dim,
-                hidden_size=recurrent_dim,
-                num_layers=num_recurrent_layers,
-                dropout=dropout,
-                batch_first=True,
-            )
-
-        self.output_layer = torch.nn.Linear(
-            in_features=recurrent_dim, out_features=output_dim, bias=False
-        )
-        self.init_layer = torch.nn.Linear(
-            in_features=recurrent_dim, out_features=output_dim, bias=False
-        )
-
-        for name, param in self.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_normal_(param)
-
-        for name, param in self.init_lstm.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_normal_(param)
-
-    def forward(
-        self,
-        input: torch.Tensor,
-        x0: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        h_init, (h0_init, c0_init) = self.init_lstm(x0)
-        h, (_, _) = self.predictor_lstm(input, (h0_init, c0_init))
-
-        return self.output_layer(h), self.init_layer(h_init)
