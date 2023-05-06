@@ -15,12 +15,12 @@ from torch.nn import functional as F
 from .. import utils
 from ...networks import loss, rnn
 from ...networks.rnn import HiddenStateForwardModule
-from ...networks.rnn import LtiRnnConvConstr
+# from ...networks.rnn import LtiRnnConvConstr
 from .. import base, utils
 from ..base import DynamicIdentificationModelConfig
 from ..datasets import RecurrentHybridPredictorDataset,RecurrentInitializerDataset, RecurrentPredictorDataset,FixedWindowDataset
 
-from .networks_JT import DiskretizedLinear,InputRNNNet,InputNet
+from .networks_JT import InputNet, InputRNNNet, DiskretizedLinear, LtiRnnConvConstr
 from .datasets_JT import TimeSeriesDataset, HybridRecurrentLinearFNNInputDataset
 from .hybrid_model_JT import Hybrid_Model
 
@@ -124,7 +124,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             raise ValueError('loss can only be "mse" or "msge"')
         
         if self.forward_alt_bool:
-            self._predictor = rnn.LtiRnnConvConstr(
+            self._predictor = LtiRnnConvConstr(
                 nx=self.nx,
                 #in dimesion is state+ output of inputnet dismesion
                 #TODO: make it variable when making the inputnet variable
@@ -136,7 +136,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 bias=self.bias,
             )#.to(self.device)
         else:
-            self._predictor = rnn.LtiRnnConvConstr(
+            self._predictor =LtiRnnConvConstr(
                 nx=self.nx,
                 #in dimesion is state+ output of inputnet dismesion
                 #TODO: make it variable when making the inputnet variable
@@ -221,8 +221,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
         us_ = utils.normalize(control_seqs, self._control_mean, self._control_std)
         ys_ = utils.normalize(state_seqs, self._state_mean, self._state_std)
-        us = torch.from_numpy(us_).float().to(self.device)
-        ys = torch.from_numpy(ys_).float().to(self.device)
+        us = us_#torch.from_numpy(us_).float().to(self.device)
+        ys = ys_#torch.from_numpy(ys_).float().to(self.device)
 
         #Initializer training
         #################################
@@ -280,9 +280,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 true_states = Lin_input.float().to(self.device) 
                 true_next_states = next_state.float().to(self.device) 
 
-                # input_forces = self._inputnet.forward(input)
-                # states_next = self._diskretized_linear.forward(input_forces,true_states)
-                # states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
                 states_next = self._Hybrid_model.forward_inputnet(
                     FNN_input=input,
                     Lin_input=true_states,
@@ -298,8 +295,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 self.optimizer_inputFNN.step()
                 max_batches = batch_idx
 
-            loss_average_ = total_loss/(max_batches+1)
-            #TODO: sanity check if same
             loss_average = total_loss/(len(data_loader))
             logger.info(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             print(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
@@ -352,10 +347,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
- 
 
-                linear_inputs_prev = self._inputnet.forward(batch['control_prev'].float().to(self.device))
-                linear_inputs_curr = self._inputnet.forward(batch['control'].float().to(self.device))
+                control_prev = batch['control_prev'].float().to(self.device)
+                # linear_inputs_curr = self._inputnet.forward(batch['control'].float().to(self.device))
                 states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std).float().to(self.device)
                 
                 #with inputnet for the control inputs?
@@ -366,7 +360,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 if self.forward_alt_bool:
                     output_normed = self._Hybrid_model.forward_predictor_onestep_alt(
-                        linear_inputs_prev=linear_inputs_prev, 
+                        control_prev=control_prev, 
                         states_prev_= states_prev_,
                         control_in= control_in,
                         _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
@@ -376,7 +370,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     )
                 else:
                     output_normed = self._Hybrid_model.forward_predictor_onestep(
-                        linear_inputs_prev=linear_inputs_prev, 
+                        control_prev=control_prev,
                         states_prev_= states_prev_,
                         control_in= control_in,
                         _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
@@ -396,57 +390,23 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #stuff for constraint checking
                 ################
                 # gradient infos
-                grads_norm = [
-                    torch.linalg.norm(p.grad)
-                    for p in filter(
-                        lambda p: p.grad is not None, self._predictor.parameters()
-                    )
-                ]
-                max_grad += max(grads_norm)
-
-                # save old parameter set
-                old_pars = [
-                    par.clone().detach() for par in self._predictor.parameters()
-                ]
-                ################
+                old_pars, max_grad = self._Hybrid_model.constr_savings(max_grad=max_grad)
 
                 self.optimizer_pred.step()
                 ########################### 
                 #Constraints Checking
                 #################################
-                # perform backtracking line search if constraints are not satisfied
-                max_iter = 100
-                alpha = 0.5
-                bls_iter = 0
-                while not self._predictor.check_constr():
-                    for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-                        new_par.data = (
-                            alpha * old_par.clone() + (1 - alpha) * new_par.data
-                        )
-
-                    if bls_iter > max_iter - 1:
-                        for old_par, new_par in zip(
-                            old_pars, self._predictor.parameters()
-                        ):
-                            new_par.data = old_par.clone()
-                        M = self._predictor.get_constraints()
-                        logger.warning(
-                            f'Epoch {i+1}/{self.epochs_predictor_singlestep}\t'
-                            f'max real eigenvalue of M: '
-                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-                            f'Backtracking line search exceeded maximum iteration. \t'
-                            f'Constraints satisfied? {self._predictor.check_constr()}'
-                        )
-                        time_end_pred = time.time()
-                        time_total_init = time_end_init - time_start_init
-                        time_total_pred = time_end_pred - time_start_pred
-
-                        raise ValueError(
-                            "Error: Model did not complete Teacher Forcing training phase. \n"
-                            "Adjust gamma, initial decay, decay rate or singlestep epochs.")
-
-                    bls_iter += 1
-
+                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                    old_pars=old_pars,
+                    current_epochs = i,
+                    max_epochs=self.epochs_predictor_singlestep,
+                    logger = logger
+                )
+                if not constr_hold:
+                    raise ValueError(
+                        "Error: Model did not complete Teacher Forcing training phase. \n"
+                        "Adjust gamma, initial decay, decay rate or singlestep epochs.")
+               
             ########################### 
             #Epoch Wrapup
             #################################
@@ -535,64 +495,38 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 init_input = self._inputnet.forward(init_control)
                 states_next = self._diskretized_linear.forward(
                     input_forces= init_input,
-                    states=init_state,
-                    residual_errors= 0)
+                    states=init_state)
                 
                 #get all inputs
                 if self.RNNinputnetbool:
                     control_ = self._inputRNNnet.forward(batch['control'].float().to(self.device))
                 else:
                     control_ =batch['control'].float().to(self.device)
-                    
                 control_lin =batch['control'].float().to(self.device)
-                input_lin = self._inputnet.forward(control_lin)
-                x = torch.zeros((control_.shape[0], 1, self.nx),device=self.device)
                 
-                outputs =[]
-                #get the sequence dimension, sanity check: is sequence length?
-                seq_len = control_.size(dim=1)
-                for seq_step in range(seq_len):
-                    #seq_step:seq_step+1 preserves the original dimensionality
-                    in_lin = input_lin[:,seq_step:seq_step+1,:]
-                    control_in = control_[:,seq_step:seq_step+1,:]
-                    
-                    #just for me (represents the timestep such that x(k+1) becomes x(k))
-                    lin_in_rnn = states_next
-
-                    #normalize the out_lin
-                    out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                    rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
-
-                    if self.forward_alt_bool:
-
-                        res_error, x = self._predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
-                    else:
-                        res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                        # hx has a very wierd format and is not the same as the output x
-                        x = [[x[0],x[0]]]
-                    res_error = res_error.to(self.device)
-                    corr_state = out_lin_norm+res_error
-
-                    #denormalize the corrected state and use it as new state for the linear
-                    corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-                    
-                    #this takes the denormalized corrected state as input
-                    states_next = self._diskretized_linear.forward(
-                        input_forces=in_lin,
-                        states=corr_state_denorm
-                        )
-
-                    #this is functionally the same as out_lin = lin_states but is good for understanding
-                    #and in case there is direct feedtrough it becomes important but then also needs an extra
-                    #network to correct the direct feedthrough
-                    output = self._diskretized_linear.calc_output(
-                        states= corr_state_denorm
+                if self.forward_alt_bool:
+                    outputs_tensor = self._Hybrid_model.forward_predictor_multistep_alt(
+                        control_lin=control_lin,
+                        control_=control_,
+                        states_next = states_next,
+                        nx=self.nx,
+                        _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                        _state_mean_torch = _state_mean_torch,
+                        _state_std_torch = _state_std_torch,
                     )
-                    output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-                    outputs.append(output_normed)
-                    
-                outputs_tensor = torch.cat(outputs, dim=1)
+                else:
+                    outputs_tensor = self._Hybrid_model.forward_predictor_multistep(
+                        control_lin=control_lin,
+                        control_=control_,
+                        states_next = states_next,
+                        nx=self.nx,
+                        _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                        _state_mean_torch = _state_mean_torch,
+                        _state_std_torch = _state_std_torch,
+                    )
+
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
                 true_state = batch['states'].float().to(self.device)
@@ -604,67 +538,33 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 #stuff for constraint checking
                 ################
-                # gradient infos
-                grads_norm = [
-                    torch.linalg.norm(p.grad)
-                    for p in filter(
-                        lambda p: p.grad is not None, self._predictor.parameters()
-                    )
-                ]
-                max_grad += max(grads_norm)
-
-                # save old parameter set
-                old_pars = [
-                    par.clone().detach() for par in self._predictor.parameters()
-                ]
-                ################
+                old_pars, max_grad = self._Hybrid_model.constr_savings(max_grad=max_grad)
 
                 self.optimizer_pred_multistep.step()
                 ########################### 
                 #Constraints Checking
                 #################################
-                # perform backtracking line search if constraints are not satisfied
-                max_iter = 100
-                alpha = 0.5
-                bls_iter = 0
-                while not self._predictor.check_constr():
-                    for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-                        new_par.data = (
-                            alpha * old_par.clone() + (1 - alpha) * new_par.data
-                        )
-
-                    if bls_iter > max_iter - 1:
-                        for old_par, new_par in zip(
-                            old_pars, self._predictor.parameters()
-                        ):
-                            new_par.data = old_par.clone()
-                        M = self._predictor.get_constraints()
-                        logger.warning(
-                            f'Epoch {i+1}/{self.epochs_predictor_multistep}\t'
-                            f'max real eigenvalue of M: '
-                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-                            f'Backtracking line search exceeded maximum iteration. \t'
-                            f'Constraints satisfied? {self._predictor.check_constr()}'
-                        )
-                        time_end_pred = time.time()
-                        time_total_init = time_end_init - time_start_init
-                        time_total_pred = time_end_pred - time_start_pred
-
-                        return dict(
-                            index=np.asarray(i),
-                            epoch_loss_initializer=np.asarray(initializer_loss),
-                            epoch_loss_predictor=np.asarray(predictor_loss),
-                            epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
-                            inputfnn_losses=np.asarray(inputfnn_losses),
-                            barrier_value=np.asarray(barrier_value),
-                            backtracking_iter=np.asarray(backtracking_iter),
-                            gradient_norm=np.asarray(gradient_norm),
-                            max_eigenvalue=np.asarray(max_eigenvalue),
-                            min_eigenvalue=np.asarray(min_eigenvalue),
-                            training_time_initializer=np.asarray(time_total_init),
-                            training_time_predictor=np.asarray(time_total_pred),
-                        )
-                    bls_iter += 1
+                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                    old_pars=old_pars,
+                    current_epochs = i,
+                    max_epochs=self.epochs_predictor_multistep,
+                    logger = logger
+                )
+                if not constr_hold:
+                    return dict(
+                        index=np.asarray(i),
+                        epoch_loss_initializer=np.asarray(initializer_loss),
+                        epoch_loss_predictor=np.asarray(predictor_loss),
+                        epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
+                        inputfnn_losses=np.asarray(inputfnn_losses),
+                        barrier_value=np.asarray(barrier_value),
+                        backtracking_iter=np.asarray(backtracking_iter),
+                        gradient_norm=np.asarray(gradient_norm),
+                        max_eigenvalue=np.asarray(max_eigenvalue),
+                        min_eigenvalue=np.asarray(min_eigenvalue),
+                        training_time_initializer=np.asarray(time_total_init),
+                        training_time_predictor=np.asarray(time_total_pred),
+                    )
 
             ########################### 
             #Epoch Wrapup
@@ -835,10 +735,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 true_states = Lin_input.float().to(self.device) 
                 true_next_states = next_state.float().to(self.device) 
 
-                input_forces = self._inputnet.forward(input)
-                states_next = self._diskretized_linear.forward(input_forces,true_states)
-                states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
-
+                states_next = self._Hybrid_model.forward_inputnet(
+                    FNN_input=input,
+                    Lin_input=true_states,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
+                    )
+                
                 #loss calculation, when weights are all 1, they are equivalent    
                 if loss_weights is None:
                     batch_loss = F.mse_loss(
@@ -870,10 +773,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 states_vali = utils.denormalize(states_vali, self._state_mean, self._state_std).float().to(self.device)
                 true_next_states_vali = true_next_states_vali.reshape(-1,true_next_states_vali.shape[-1]).float().to(self.device)
 
-                input_forces_vali = self._inputnet.forward(controls_vali)
-                states_next_vali = self._diskretized_linear.forward(input_forces_vali,states_vali)
-                states_next_vali = utils.normalize(states_next_vali, _state_mean_torch, _state_std_torch)
-
+                states_next_vali = self._Hybrid_model.forward_inputnet(
+                    FNN_input=controls_vali,
+                    Lin_input=states_vali,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
+                    )
+                
                 if loss_weights is None:
                     validation_loss = F.mse_loss(
                         states_next_vali, true_next_states_vali
@@ -891,8 +797,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     inputfnn_best_val_loss = validation_loss
                     inputfnn_best_epoch = i
 
-            loss_average_ = total_loss/(max_batches+1)
-            #TODO:sanity check
             loss_average = total_loss/(len(data_loader))
             logger.info(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
             print(f'Epoch {i + 1}/{self.epochs_InputFNN} - Epoch average Loss (InputFNN): {loss_average}')
@@ -935,7 +839,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         #break training loop if constraint is failed 
         # (will then fall back to last validation checkpoint)
-        stop_train = False
+        constr_hold = True
 
         #validation
         predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
@@ -970,59 +874,37 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(batch['x0'].float().to(self.device))
- 
-                #computationally efficient but not good to read and understand
-                #explaination: 
-                # we need to initialize the internal state of the _diskretized_linear
-                # because else the first state would be x0 from the training data
-                # without error and wouldnt train our RNN correctly, and since we
-                # use one-step prediction we dont need any loop and can just compute 
-                # the following next states in one go with the training data. Thats why
-                # we need the _prev values. The lin_states then represent the internal
-                # states of the "current" timestep (not the prev) and we can then output those 
-                linear_inputs_prev = self._inputnet.forward(batch['control_prev'].float().to(self.device))
-                linear_inputs_curr = self._inputnet.forward(batch['control'].float().to(self.device))
+
+                control_prev = batch['control_prev'].float().to(self.device)
+                # linear_inputs_curr = self._inputnet.forward(batch['control'].float().to(self.device))
                 states_prev_ = utils.denormalize(batch['states_prev'], self._state_mean, self._state_std).float().to(self.device)
-                lin_states = self._diskretized_linear.forward(
-                    input_forces= linear_inputs_prev,
-                    states=states_prev_,
-                    residual_errors= 0, #since it's onestep prediction, the input state has no error
-                )
- 
-                #just for me  (represents the timestep such that x(k+1) becomes x(k))
-                lin_in_rnn = lin_states               
-
-                #normalize the out_lin
-                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
+               
                 #with inputnet for the control inputs?
                 if self.RNNinputnetbool:
                     control_in = self._inputRNNnet.forward(batch['control'].float().to(self.device))
                 else:
                     control_in =batch['control'].float().to(self.device)
-                #do the rnn 
-                rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
+
                 if self.forward_alt_bool:
-                    res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
+                    output_normed = self._Hybrid_model.forward_predictor_onestep_alt(
+                        control_prev=control_prev, 
+                        states_prev_= states_prev_,
+                        control_in= control_in,
+                        _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                        _state_mean_torch= _state_mean_torch,
+                        _state_std_torch= _state_std_torch
+                    )
                 else:
-                    res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
-
-                res_error = res_error.to(self.device)
-                #calculated the corrected output and barrier
-                # it is impotant to note that batch['states'] are normalised states (see loss)
-                corr_states = out_lin_norm+res_error
-
-                #denormalize to go trough possible linear system output
-                corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                #this is functionally the same as output = corr_states_denorm but is good for understanding
-                #and in case there is direct feedtrough it becomes important but then also needs an extra
-                #network to correct the direct feedthrough
-                output = self._diskretized_linear.calc_output(
-                    states= corr_states_denorm
-                )
-                output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-
+                    output_normed = self._Hybrid_model.forward_predictor_onestep(
+                        control_prev=control_prev,
+                        states_prev_= states_prev_,
+                        control_in= control_in,
+                        _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                        _state_mean_torch= _state_mean_torch,
+                        _state_std_torch= _state_std_torch
+                    )
 
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
@@ -1036,7 +918,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         ((batch['states'].float().to(self.device) - output_normed) ** 2) * loss_weights
                         )
                 
-                
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
 
@@ -1044,62 +925,23 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 #stuff for constraint checking
                 ################
                 # gradient infos
-                grads_norm = [
-                    torch.linalg.norm(p.grad)
-                    for p in filter(
-                        lambda p: p.grad is not None, self._predictor.parameters()
-                    )
-                ]
-                max_grad += max(grads_norm)
-
-                # save old parameter set
-                old_pars = [
-                    par.clone().detach() for par in self._predictor.parameters()
-                ]
+                old_pars, max_grad = self._Hybrid_model.constr_savings(max_grad=max_grad)
                 ################
 
                 self.optimizer_pred.step()
                 ########################### 
                 #Constraints Checking
                 #################################
-                # perform backtracking line search if constraints are not satisfied
-                max_iter = 100
-                alpha = 0.5
-                bls_iter = 0
-                while not self._predictor.check_constr():
-                    for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-                        new_par.data = (
-                            alpha * old_par.clone() + (1 - alpha) * new_par.data
-                        )
+                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                    old_pars=old_pars,
+                    current_epochs = i,
+                    max_epochs=self.epochs_predictor_singlestep,
+                    logger = logger
+                )
 
-                    if bls_iter > max_iter - 1:
-                        for old_par, new_par in zip(
-                            old_pars, self._predictor.parameters()
-                        ):
-                            new_par.data = old_par.clone()
-                        M = self._predictor.get_constraints()
-                        logger.warning(
-                            f'Epoch {i+1}/{self.epochs_predictor_singlestep}\t'
-                            f'max real eigenvalue of M: '
-                            f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-                            f'Backtracking line search exceeded maximum iteration. \t'
-                            f'Constraints satisfied? {self._predictor.check_constr()}'
-                        )
-                        time_end_pred = time.time()
-                        time_total_init = time_end_init - time_start_init
-                        time_total_pred = time_end_pred - time_start_pred
-
-                        #Trainings that ended here seemed to result in worse models,
-                        # also it circumvents the validation so it wont check if an earlier
-                        # epoch was better => let it break the training here  
-                        stop_train = True
-                        break
-
-                    bls_iter += 1
-
-                if stop_train:
+                if not constr_hold:
                     break
-            if stop_train:
+            if not constr_hold:
                 break
 
             ########################### 
@@ -1117,45 +959,37 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 # Initialize predictor with state of initializer network
                 _, hx = self._initializer.forward(x0.float().to(self.device))
-                linear_inputs_prev = self._inputnet.forward(control_prev.float().to(self.device))
-                linear_inputs_curr = self._inputnet.forward(control.float().to(self.device))
+
+                control_prev = control_prev.float().to(self.device)
+                # linear_inputs_curr = self._inputnet.forward(control.float().to(self.device))
                 states_prev_ = utils.denormalize(states_prev, self._state_mean, self._state_std).float().to(self.device)
-                lin_states = self._diskretized_linear.forward(
-                    input_forces= linear_inputs_prev,
-                    states=states_prev_,
-                    residual_errors= 0, #since it's onestep prediction, the input state has no error
-                )
-
-                #just for me  (represents the timestep such that x(k+1) becomes x(k))
-                lin_in_rnn = lin_states
-                
-                #normalize the out_lin
-                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
+               
                 #with inputnet for the control inputs?
                 if self.RNNinputnetbool:
                     control_in = self._inputRNNnet.forward(control.float().to(self.device))
                 else:
                     control_in = control.float().to(self.device)
-                #do the rnn 
-                rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
+
                 if self.forward_alt_bool:
-                    res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
+                    output_normed = self._Hybrid_model.forward_predictor_onestep_alt(
+                        control_prev=control_prev, 
+                        states_prev_= states_prev_,
+                        control_in= control_in,
+                        _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                        _state_mean_torch= _state_mean_torch,
+                        _state_std_torch= _state_std_torch
+                    )
                 else:
-                    res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
-                res_error = res_error.to(self.device)
-                corr_states = out_lin_norm+res_error
-
-                #denormalize to go trough possible linear system output
-                corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                #this is functionally the same as output = corr_states_denorm but is good for understanding
-                #and in case there is direct feedtrough it becomes important but then also needs an extra
-                #network to correct the direct feedthrough
-                output = self._diskretized_linear.calc_output(
-                    states= corr_states_denorm
-                )
-                output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+                    output_normed = self._Hybrid_model.forward_predictor_onestep(
+                        control_prev=control_prev,
+                        states_prev_= states_prev_,
+                        control_in= control_in,
+                        _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                        _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                        _state_mean_torch= _state_mean_torch,
+                        _state_std_torch= _state_std_torch
+                    )
 
                 barrier = self._predictor.get_barrier(t).to(self.device)
 
@@ -1240,7 +1074,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         for index, seq_len in enumerate(self.sequence_length_list):
             #break training loop if constraint is failed 
             # (will then fall back to last validation checkpoint)
-            stop_train = False
+            constr_hold = True
 
             #make dataset with rising sequence length
             predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, seq_len)
@@ -1299,8 +1133,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
                         input_forces= init_input,
-                        states=init_state,
-                        residual_errors= 0)
+                        states=init_state)
                     
                     #get all inputs
                     if self.RNNinputnetbool:
@@ -1308,53 +1141,31 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     else:
                         control_ =batch['control'].float().to(self.device)
                     control_lin =batch['control'].float().to(self.device)
-                    input_lin = self._inputnet.forward(control_lin)
-                    x = torch.zeros((control_.shape[0], 1, self.nx),device=self.device)
-                    
-                    outputs =[]
-                    #get the sequence dimension, sanity check: is sequence length?
-                    seq_len = control_.size(dim=1)
-                    for seq_step in range(seq_len):
-                        #seq_step:seq_step+1 preserves the original dimensionality
-                        in_lin = input_lin[:,seq_step:seq_step+1,:]
-                        control_in = control_[:,seq_step:seq_step+1,:]
-                        
-                        #just for me (represents the timestep such that x(k+1) becomes x(k))
-                        lin_in_rnn = states_next
-                        
-                        #normalize the out_lin
-                        out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-                        rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
-                        if self.forward_alt_bool:
-                            res_error, x = self._predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
-                        else:
-                            res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                            # hx has a very wierd format and is not the same as the output x
-                            x = [[x[0],x[0]]]
-                        res_error = res_error.to(self.device)
-                        corr_state = out_lin_norm+res_error
-
-                        #denormalize the corrected state and use it as new state for the linear
-                        corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-                        
-                        #this takes the denormalized corrected state as input
-                        states_next = self._diskretized_linear.forward(
-                            input_forces=in_lin,
-                            states=corr_state_denorm
-                            )
-                        
-                        #this is functionally the same as out_lin = lin_states but is good for understanding
-                        #and in case there is direct feedtrough it becomes important but then also needs an extra
-                        #network to correct the direct feedthrough
-                        output = self._diskretized_linear.calc_output(
-                            states= corr_state_denorm
+                    if self.forward_alt_bool:
+                        outputs_tensor = self._Hybrid_model.forward_predictor_multistep_alt(
+                            control_lin=control_lin,
+                            control_=control_,
+                            states_next = states_next,
+                            nx=self.nx,
+                            _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                            _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                            _state_mean_torch = _state_mean_torch,
+                            _state_std_torch = _state_std_torch,
                         )
-                        output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-                        outputs.append(output_normed)
+                    else:
+                        outputs_tensor = self._Hybrid_model.forward_predictor_multistep(
+                            control_lin=control_lin,
+                            control_=control_,
+                            states_next = states_next,
+                            nx=self.nx,
+                            _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                            _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                            _state_mean_torch = _state_mean_torch,
+                            _state_std_torch = _state_std_torch,
+                        )
 
 
-                    outputs_tensor = torch.cat(outputs, dim=1)
                     barrier = self._predictor.get_barrier(t).to(self.device)
 
                     true_state = batch['states'].float().to(self.device)
@@ -1376,87 +1187,22 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                     #stuff for constraint checking
                     ################
-                    # gradient infos
-                    grads_norm = [
-                        torch.linalg.norm(p.grad)
-                        for p in filter(
-                            lambda p: p.grad is not None, self._predictor.parameters()
-                        )
-                    ]
-                    max_grad += max(grads_norm)
-
-                    # save old parameter set
-                    old_pars = [
-                        par.clone().detach() for par in self._predictor.parameters()
-                    ]
-                    ################
+                    old_pars, max_grad = self._Hybrid_model.constr_savings(max_grad=max_grad)
 
                     self.optimizer_pred_multistep.step()
                     ########################### 
                     #Constraints Checking
                     #################################
-                    # perform backtracking line search if constraints are not satisfied
-                    max_iter = 100
-                    alpha = 0.5
-                    bls_iter = 0
-                    while not self._predictor.check_constr():
-                        for old_par, new_par in zip(old_pars, self._predictor.parameters()):
-                            new_par.data = (
-                                alpha * old_par.clone() + (1 - alpha) * new_par.data
-                            )
+                    constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                        old_pars=old_pars,
+                        current_epochs = i,
+                        max_epochs=self.epochs_predictor_multistep,
+                        logger = logger
+                    )
 
-                        if bls_iter > max_iter - 1:
-                            for old_par, new_par in zip(
-                                old_pars, self._predictor.parameters()
-                            ):
-                                new_par.data = old_par.clone()
-                            M = self._predictor.get_constraints()
-                            logger.warning(
-                                f'Epoch {i+1}/{self.epochs_predictor_multistep}\t'
-                                f'max real eigenvalue of M: '
-                                f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
-                                f'Backtracking line search exceeded maximum iteration. \t'
-                                f'Constraints satisfied? {self._predictor.check_constr()}'
-                            )
-                            time_end_pred = time.time()
-                            time_total_init = time_end_init - time_start_init
-                            time_total_pred = time_end_pred - time_start_pred
-
-                            #Trainings that ended here seemed to result in worse models,
-                            # also it circumvents the validation so it wont check if an earlier
-                            # epoch was better => let it break the training here  
-                            stop_train = True
-                            break
-
-                            return dict(
-                                index=np.asarray(i),
-                                epoch_loss_initializer=np.asarray(initializer_loss),
-                                epoch_loss_predictor=np.asarray(predictor_loss),
-                                epoch_loss_predictor_multistep=np.asarray(predictor_loss_multistep),
-                                inputfnn_losses=np.asarray(inputfnn_losses),
-                                barrier_value=np.asarray(barrier_value),
-                                backtracking_iter=np.asarray(backtracking_iter),
-                                gradient_norm=np.asarray(gradient_norm),
-                                max_eigenvalue=np.asarray(max_eigenvalue),
-                                min_eigenvalue=np.asarray(min_eigenvalue),
-                                training_time_initializer=np.asarray(time_total_init),
-                                training_time_predictor=np.asarray(time_total_pred),
-                                #validation
-                                inputfnn_val_loss=np.array(inputfnn_validation_losses, dtype=np.float64), 
-                                inputfnn_best_epoch = inputfnn_best_epoch, 
-                                inputfnn_best_val_loss = inputfnn_best_val_loss.item(),
-                                predictor_val_loss=np.array(predictor_validation_losses, dtype=np.float64), 
-                                predictor_best_epoch = predictor_best_epoch, 
-                                predictor_best_val_loss = predictor_best_val_loss.item(),
-                                predictor_multistep_val_loss=np.array(predictor_multistep_validation_losses, dtype=np.float64), 
-                                predictor_multistep_best_epoch = predictor_multistep_best_epoch, 
-                                predictor_multistep_best_val_loss = predictor_multistep_best_val_loss.item(),
-                            )
-                        bls_iter += 1
-
-                    if stop_train:
+                    if not constr_hold:
                         break
-                if stop_train:
+                if not constr_hold:
                     break
                 ########################### 
                 #main validation check for overfitt prevention
@@ -1482,60 +1228,38 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
                         input_forces= init_input,
-                        states=init_state,
-                        residual_errors= 0)
+                        states=init_state)
                     
                     #get all inputs
                     if self.RNNinputnetbool:
                         control_ = self._inputRNNnet.forward(control.float().to(self.device))
                     else:
                         control_ =control.float().to(self.device)
-
                     control_lin =control.float().to(self.device)
-                    input_lin = self._inputnet.forward(control_lin)
-                    x = torch.zeros((control_.shape[0], 1, self.nx),device=self.device)
-                    
-                    outputs =[]
-                    #get the sequence dimension, sanity check: is sequence length?
-                    seq_len = control_.size(dim=1)
-                    for seq_step in range(seq_len):
-                        #seq_step:seq_step+1 preserves the original dimensionality
-                        in_lin = input_lin[:,seq_step:seq_step+1,:]
-                        control_in = control_[:,seq_step:seq_step+1,:]
-                        
-                        #just for me (represents the timestep such that x(k+1) becomes x(k))
-                        lin_in_rnn = states_next
-                        
-                        #normalize the out_lin
-                        out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
 
-                        rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
-                        if self.forward_alt_bool:
-                            res_error, x = self._predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
-                        else:
-                            res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                            # hx has a very wierd format and is not the same as the output x
-                            x = [[x[0],x[0]]]                           
-                        res_error = res_error.to(self.device)
-                        corr_state = out_lin_norm+res_error
-
-                        #denormalize the corrected state and use it as new state for the linear
-                        corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-                        states_next = self._diskretized_linear.forward(
-                            input_forces=in_lin,
-                            states=corr_state_denorm
-                            )
-                        
-                        #this is functionally the same as out_lin = lin_states but is good for understanding
-                        #and in case there is direct feedtrough it becomes important but then also needs an extra
-                        #network to correct the direct feedthrough
-                        output = self._diskretized_linear.calc_output(
-                            states= corr_state_denorm
+                    if self.forward_alt_bool:
+                        outputs_tensor = self._Hybrid_model.forward_predictor_multistep_alt(
+                            control_lin=control_lin,
+                            control_=control_,
+                            states_next = states_next,
+                            nx=self.nx,
+                            _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                            _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                            _state_mean_torch = _state_mean_torch,
+                            _state_std_torch = _state_std_torch,
                         )
-                        output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
-                        outputs.append(output_normed)                    
+                    else:
+                        outputs_tensor = self._Hybrid_model.forward_predictor_multistep(
+                            control_lin=control_lin,
+                            control_=control_,
+                            states_next = states_next,
+                            nx=self.nx,
+                            _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                            _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                            _state_mean_torch = _state_mean_torch,
+                            _state_std_torch = _state_std_torch,
+                        )
 
-                    outputs_tensor = torch.cat(outputs, dim=1)
                     barrier = self._predictor.get_barrier(t).to(self.device)
 
                     true_state = states.float().to(self.device)
@@ -1677,12 +1401,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         init_cont = utils.normalize(initial_control, self.control_mean, self.control_std)
         init_state = utils.normalize(initial_state, self.state_mean, self.state_std)
-        control_ = utils.normalize(control, self.control_mean, self.control_std)
+        control = utils.normalize(control, self.control_mean, self.control_std)
 
 
-        control_ = torch.from_numpy(control_).float().to(self.device)
+        control = torch.from_numpy(control).float().to(self.device)
         #put it in batch,sequence,state format
-        control_ = control_.unsqueeze(0)
+        control = control.unsqueeze(0)
         init_cont = torch.from_numpy(init_cont)
         init_state = torch.from_numpy(init_state)
 
@@ -1708,62 +1432,42 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 .to(self.device)
             )
 
+            #get all inputs
+            if self.RNNinputnetbool:
+                control_ = self._inputRNNnet.forward(control)
+            else:
+                control_ =control
+            control_lin =control
             #init the hidden state of our RNN
             _, hx = self._initializer.forward(init_x)
-            x = torch.zeros((1, 1, self.nx),device=self.device)
 
-            input_lin = self._inputnet.forward(control_)
-
-            if self.RNNinputnetbool:
-                control_ = self._inputRNNnet.forward(control_)
-
-            outputs =[]
-
-            # split the tensors along the second dimension 
-            input_lin_list = torch.unbind(input_lin, dim=1)
-            control_list = torch.unbind(control_, dim=1)
-
-            # iterate over the resulting tensors
-            for in_lin, control_in in zip(input_lin_list, control_list):
-                
-                #needs batch and sequence format
-                in_lin_ = torch.unsqueeze(in_lin, dim=1)
-                control_in_ = torch.unsqueeze(control_in, dim=1)
-
-                #just for me  (represents the timestep such that x(k+1) becomes x(k))
-                lin_in_rnn = states_next
-                
-                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                rnn_input = torch.concat([control_in_, out_lin_norm],dim=2)
-                if self.forward_alt_bool:
-                    res_error, x = self._predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
-                else:
-                    res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                    # hx has a very wierd format and is not the same as the output x
-                    x = [[x[0],x[0]]]
-                res_error = res_error.to(self.device)
-                corr_state = out_lin_norm+res_error
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                #this is functionally the same as out_lin = lin_states but is good for understanding
-                #and in case there is direct feedtrough it becomes important but then also needs an extra
-                #network to correct the direct feedthrough
-                output = self._diskretized_linear.calc_output(
-                    states= corr_state_denorm
+            if self.forward_alt_bool:
+                outputs_tensor = self._Hybrid_model.forward_predictor_multistep_alt(
+                    control_lin=control_lin,
+                    control_=control_,
+                    states_next = states_next,
+                    nx=self.nx,
+                    _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
                 )
-                outputs.append(output)
+            else:
+                outputs_tensor = self._Hybrid_model.forward_predictor_multistep(
+                    control_lin=control_lin,
+                    control_=control_,
+                    states_next = states_next,
+                    nx=self.nx,
+                    _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
+                )
 
-                #this takes the denormalized corrected state as input
-                states_next = self._diskretized_linear.forward(
-                    input_forces=in_lin_,
-                    states=corr_state_denorm,
-                    )
+            outputs_tensor_denorm = utils.denormalize(outputs_tensor, _state_mean_torch, _state_std_torch)
 
-            
-            outputs_tensor = torch.cat(outputs, dim=1)
             y_np: NDArray[np.float64] = (
-                outputs_tensor.cpu().detach().squeeze().numpy().astype(np.float64)
+                outputs_tensor_denorm.cpu().detach().squeeze().numpy().astype(np.float64)
             )
 
         return y_np
@@ -1815,65 +1519,55 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #the 49 incooperates the init of the diskretized linear 
         #and we then drop the last state since, while we can compute
         # the last next state we dont have meassurements there 
-        prev_cont_in = controls_[:, 49:, :]
-        lin_state_in = states_[:, 49:, :]
-        lin_forces_in = forces_[:, 49:, :]
+        #drop last next state to fit with RNN inputs and because see previous comment about 49
+        prev_cont_in = controls_[:, 49:-1, :]
+        lin_state_in = states_[:, 49:-1, :]
+        lin_forces_in = forces_[:, 49:-1, :]
 
         #for the RNN we now need the values from 50 onward
-        curr_cont_in =controls_[:, 50:, :]
         if self.RNNinputnetbool:
             curr_cont_in = self._inputRNNnet.forward(curr_cont_in)
-
+        else:
+            curr_cont_in =controls_[:, 50:, :]
         curr_cont_in_lin =controls_[:, 50:, :]
 
         with torch.no_grad():
-            prev_input_forces = self._inputnet.forward(prev_cont_in)
-
-            #drop last next state to fit with RNN inputs and because see previous comment about 49
-            states_next = self._diskretized_linear.forward(prev_input_forces,lin_state_in)[:,:-1,:]
-            states_next_with_true_input_forces = self._diskretized_linear.forward(lin_forces_in,lin_state_in)[:,:-1,:]
-            
-            curr_input_forces_ = self._inputnet.forward(curr_cont_in_lin)
-
-            #just for me  (represents the timestep such that x(k+1) becomes x(k))
-            lin_in_rnn = states_next
-            states_with_true_input_forces = states_next_with_true_input_forces
-            
-            #again the problem with the hidden state:
-            #   altough the diskretized linear does one step prediction
-            #   the RNN has to do a sequence, but since idealy it corrects
-            #   the diskretized linears predicted state perfectly, the fact 
-            #   that the diskretized linear always gets the true state could be
-            #   what the RNN is trained for.
-            
             _, hx = self._initializer.forward(x0_init)
-            out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-            rnn_input = torch.concat((curr_cont_in,out_lin_norm),dim=2)
-            if self.forward_alt_bool:
-                res_error, _ = self._predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
-            else:
-                res_error, _ = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
-            res_error = res_error.to(self.device)
-            #I DONT denormalise the res_error, I can simply denormalise the corrected states
-            pred_states_ = out_lin_norm + res_error
-            pred_states_ = utils.denormalize(pred_states_, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-            #this is functionally the same as output = pred_states_ but is good for understanding
-            #and in case there is direct feedtrough it becomes important but then also needs an extra
-            #network to correct the direct feedthrough
-            output = self._diskretized_linear.calc_output(
-                states = pred_states_
-                )
-            true_input_pred_states_ = self._diskretized_linear.calc_output(
-                states = states_with_true_input_forces,
-                )
-
+            true_input_pred_states_ = self._diskretized_linear.forward(lin_forces_in,lin_state_in)
+            curr_input_forces_ = self._inputnet.forward(curr_cont_in_lin)
             filler_forces_ = self._inputnet.forward(x0_control)
+            
+            control_prev = prev_cont_in
+            states_prev_ = lin_state_in
+            control_in = curr_cont_in
+
+            if self.forward_alt_bool:
+                output_normed = self._Hybrid_model.forward_predictor_onestep_alt(
+                    control_prev=control_prev, 
+                    states_prev_= states_prev_,
+                    control_in= control_in,
+                    _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                    _state_mean_torch= _state_mean_torch,
+                    _state_std_torch= _state_std_torch
+                )
+            else:
+                output_normed = self._Hybrid_model.forward_predictor_onestep(
+                    control_prev=control_prev,
+                    states_prev_= states_prev_,
+                    control_in= control_in,
+                    _state_mean_RNN_in_torch= _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch= _state_std_RNN_in_torch,
+                    _state_mean_torch= _state_mean_torch,
+                    _state_std_torch= _state_std_torch
+                )
+
+            output_denormed = utils.denormalize(output_normed, _state_mean_torch, _state_std_torch)
 
         #fill the start that is used for initialisation with nans
         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
         filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
-        pred_states = torch.concat((filler_nans_states,output),dim=1)
+        pred_states = torch.concat((filler_nans_states,output_denormed),dim=1)
         true_input_pred_states = torch.concat((filler_nans_states,true_input_pred_states_),dim=1)
         curr_input_forces = torch.concat((filler_nans_cont,curr_input_forces_),dim=1)
 
@@ -1923,7 +1617,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         x0_states_normed_ = states_normed_[:, :50, :]
         x0_init = torch.cat((x0_control, x0_states_normed_), axis=-1)
 
-        control_ = controls_[:, 50:,:]
+        control = controls_[:, 50:,:]
 
         with torch.no_grad():
             #TODO: does it take only one? and the right one?
@@ -1948,63 +1642,46 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             # )
             init_x = x0_init
 
+            if self.RNNinputnetbool:
+                control_ = self._inputRNNnet.forward(control)
+            else:
+                control_ =control
+            control_lin =control
             #init the hidden state of our RNN
             _, hx = self._initializer.forward(init_x)
-            x = torch.zeros((control_.shape[0], 1, self.nx),device=self.device)
-
-            input_lin = self._inputnet.forward(control_)
-
-            if self.RNNinputnetbool:
-                control_ = self._inputRNNnet.forward(control_)
-
-            outputs =[]
             filler_forces_ = self._inputnet.forward(x0_control)
+            input_lin = self._inputnet.forward(control_lin)
 
-            # split the tensors along the second dimension
-            input_lin_list = torch.unbind(input_lin, dim=1)
-            control_list = torch.unbind(control_, dim=1)
 
-            # iterate over the resulting tensors
-            for in_lin, control_in in zip(input_lin_list, control_list):
-                
-                #needs batch and sequence format
-                in_lin_ = torch.unsqueeze(in_lin, dim=1)
-                control_in_ = torch.unsqueeze(control_in, dim=1)
-
-                #just for me  (represents the timestep such that x(k+1) becomes x(k))
-                lin_in_rnn = states_next
-
-                out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-
-                rnn_input = torch.concat([control_in_, out_lin_norm],dim=2)
-                if self.forward_alt_bool:
-                    res_error, x = self._predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
-                else:
-                    res_error, x = self._predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-                    # hx has a very wierd format and is not the same as the output x
-                    x = [[x[0],x[0]]]
-                res_error = res_error.to(self.device)
-                corr_state = out_lin_norm+res_error
-                corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-                
-                #this is functionally the same as out_lin = lin_states but is good for understanding
-                #and in case there is direct feedtrough it becomes important but then also needs an extra
-                #network to correct the direct feedthrough
-                output = self._diskretized_linear.calc_output(
-                    states = corr_state_denorm,
+            if self.forward_alt_bool:
+                outputs_tensor = self._Hybrid_model.forward_predictor_multistep_alt(
+                    control_lin=control_lin,
+                    control_=control_,
+                    states_next = states_next,
+                    nx=self.nx,
+                    _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
                 )
-                outputs.append(output)
-                #this takes the denormalized corrected state as input and calculates the next state
-                states_next = self._diskretized_linear.forward(
-                    input_forces=in_lin_,
-                    states=corr_state_denorm,
-                    )
-            outputs_tensor = torch.cat(outputs, dim=1)
+            else:
+                outputs_tensor = self._Hybrid_model.forward_predictor_multistep(
+                    control_lin=control_lin,
+                    control_=control_,
+                    states_next = states_next,
+                    nx=self.nx,
+                    _state_mean_RNN_in_torch = _state_mean_RNN_in_torch,
+                    _state_std_RNN_in_torch = _state_std_RNN_in_torch,
+                    _state_mean_torch = _state_mean_torch,
+                    _state_std_torch = _state_std_torch,
+                )
+
+            outputs_tensor_denorm = utils.denormalize(outputs_tensor, _state_mean_torch, _state_std_torch)
 
         #fill the start that is used for initialisation with nans
         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
         filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
-        pred_states = torch.concat((filler_nans_states,outputs_tensor),dim=1)
+        pred_states = torch.concat((filler_nans_states,outputs_tensor_denorm),dim=1)
         curr_input_forces = torch.concat((filler_nans_cont,input_lin),dim=1)
 
         return (curr_input_forces.detach().cpu().numpy().astype(np.float64),

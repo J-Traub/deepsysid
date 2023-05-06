@@ -112,8 +112,7 @@ class DiskretizedLinear(nn.Module):
 
     def forward(self, 
                 input_forces: torch.Tensor,
-                states: torch.Tensor ,
-                residual_errors: torch.Tensor = 0
+                states: torch.Tensor 
                 ) -> torch.Tensor:
         #calculates x_(k+1) = Ad*x_k + Bd*u_k + Ad*e_k
         #           with x_corr_k = x_k+e_k the residual error corrected state
@@ -124,7 +123,7 @@ class DiskretizedLinear(nn.Module):
         delta_in = input_forces - self.ssv_input
         #add the correction calculated by the RNN to the state
         # can be seen as additional input with Ad matrix as input Matrix
-        states_corr = states + residual_errors
+        states_corr = states 
         #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
         delta_states_corr = states_corr - self.ssv_states
         #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
@@ -137,7 +136,7 @@ class DiskretizedLinear(nn.Module):
     
     def calc_output(self, 
             states: torch.Tensor,
-            input_forces: torch.Tensor = None,
+            input_forces: Optional[torch.Tensor] = None,
             ) -> torch.Tensor:
         """Has no real function yet and just gives out the states but in case of a
         system with direct feedtrough or where C is not Identity it is better
