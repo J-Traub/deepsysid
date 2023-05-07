@@ -311,9 +311,9 @@ class LtiRnnConvConstr(jit.ScriptModule):
     def forward(
         self,
         x_pred: torch.Tensor,
-        device: Optional[str] = "cpu",
-        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        device: torch.device = torch.device("cpu"),
+        hx: Optional[torch.Tensor]= None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         n_batch, n_sample, _ = x_pred.shape
 
         Y_inv = self.Y.inverse()
@@ -322,25 +322,25 @@ class LtiRnnConvConstr(jit.ScriptModule):
         y = torch.zeros((n_batch, n_sample, self.ny),device=device)
 
         if hx is not None:
-            x = hx[0][1]
+            x = hx
         else:
             x = torch.zeros((n_batch, self.nx),device=device)
 
         for k in range(n_sample):
-            z = (self.C2_tilde(x) + self.D21_tilde(x_pred[:, k, :]) + self.b_z) @ T_inv
+            z = (self.C2(x) + self.D21(x_pred[:, k, :]) )#+ self.b_z) @ self.T_inv
             w = self.nl(z)
-            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w) + self.b_y
+            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w) #+ self.b_y
             x = (
-                self.A_tilde(x) + self.B1_tilde(x_pred[:, k, :]) + self.B2_tilde(w)
-            ) @ Y_inv
+                self.A(x) + self.B1(x_pred[:, k, :]) + self.B2(w)
+            ) #@ self.Y_inv
 
-        return y, (x, x)
+        return y, x
 
     # @jit.script_method
     def forward_alt(
         self,
         x_pred: torch.Tensor,
-        device: Optional[str] = "cpu",
+        device: torch.device = torch.device("cpu"),
         hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
     ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         n_batch, n_sample, _ = x_pred.shape
@@ -367,7 +367,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
 
         return y, (x, x)
     
-    @jit.script_method
+    # @jit.script_method
     def forward_alt_onestep(
         self,
         x_pred: torch.Tensor,

@@ -166,7 +166,7 @@ class Hybrid_Model(nn.Module):
         control_lin,
         control_,
         states_next,
-        nx,
+        nx: int,
         _state_mean_RNN_in_torch,
         _state_std_RNN_in_torch,
         _state_mean_torch,
@@ -205,7 +205,6 @@ class Hybrid_Model(nn.Module):
 
             res_error, x = self.predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
 
-            res_error = res_error.to(self.device)
             corr_state = out_lin_norm+res_error
 
             #denormalize the corrected state and use it as new state for the linear
@@ -234,7 +233,7 @@ class Hybrid_Model(nn.Module):
         control_lin,
         control_,
         states_next,
-        nx,
+        nx: int,
         _state_mean_RNN_in_torch,
         _state_std_RNN_in_torch,
         _state_mean_torch,
@@ -260,9 +259,7 @@ class Hybrid_Model(nn.Module):
             rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
 
             res_error, x = self.predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
-            # hx has a very wierd format and is not the same as the output x
-            x = [[x[0],x[0]]]
-            res_error = res_error.to(self.device)
+
             corr_state = out_lin_norm+res_error
 
             #denormalize the corrected state and use it as new state for the linear

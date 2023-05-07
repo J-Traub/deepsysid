@@ -1,10 +1,11 @@
-from typing import List, Tuple, TypeVar
+from typing import List, Tuple, Union
 
 import numpy as np
 import torch
 from numpy.typing import NDArray
 
 TensorType = TypeVar('TensorType', torch.Tensor, NDArray[np.float64])
+
 
 
 def mean_stddev(
@@ -15,11 +16,11 @@ def mean_stddev(
     return mean, stddev
 
 
-def denormalize(x:  torch.Tensor, mean:  torch.Tensor, stddev:  torch.Tensor) ->  torch.Tensor:
+def denormalize(x: TensorType, mean: TensorType, stddev: torch.Tensor) -> torch.Tensor:
     return x * stddev + mean
 
 
-def normalize(x:  torch.Tensor, mean:  torch.Tensor, stddev:  torch.Tensor) ->  torch.Tensor:
+def normalize(x: torch.Tensor, mean: torch.Tensor, stddev: torch.Tensor) -> TensorType:
     return (x - mean) / stddev
 
 
