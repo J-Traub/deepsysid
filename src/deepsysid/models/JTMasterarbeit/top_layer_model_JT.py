@@ -778,7 +778,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # Check if the current validation loss is the best so far
                 if validation_loss < inputfnn_best_val_loss:
                     # If it is, save the model parameters
-                    torch.save(self._inputnet.state_dict(), 'best_model_params.pth')
+                    best_pars = [par.clone().detach() for par in self._inputnet.parameters()]
+                    # torch.save(self._inputnet.state_dict(), 'best_model_params.pth')
                     # Update the best validation loss
                     inputfnn_best_val_loss = validation_loss
                     inputfnn_best_epoch = i
@@ -796,7 +797,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
 
         #load the best parameters with best validation loss (early stopping)
-        self._inputnet.load_state_dict(torch.load('best_model_params.pth'))
+        for best_par, new_par in zip(
+                    best_pars, self._inputnet.parameters()
+                ):
+                    new_par.data = best_par.clone()
+        # self._inputnet.load_state_dict(torch.load('best_model_params.pth'))
 
         ###########################
         #calculate the mean and std of the output of the diskretized linear
@@ -994,7 +999,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 # Check if the current validation loss is the best so far
                 if validation_loss < predictor_best_val_loss:
                     # If it is, save the model parameters
-                    torch.save(self._predictor.state_dict(), 'best_model_params.pth')
+                    best_pars = [par.clone().detach() for par in self._predictor.parameters()]
+                    # torch.save(self._predictor.state_dict(), 'best_model_params.pth')
                     # Update the best validation loss
                     predictor_best_val_loss = validation_loss
                     predictor_best_epoch = i
@@ -1044,7 +1050,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 break
 
         #load the best parameters with best validation loss (early stopping)
-        self._predictor.load_state_dict(torch.load('best_model_params.pth'))
+        for best_par, new_par in zip(
+                    best_pars, self._predictor.parameters()
+                ):
+                    new_par.data = best_par.clone()
+        # self._predictor.load_state_dict(torch.load('best_model_params.pth'))
 
         ###########################
         #Predictor (ConvRNN) 
@@ -1265,7 +1275,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                     if validation_loss < predictor_multistep_best_val_loss[index]:
                         # If it is, save the model parameters
-                        torch.save(self._predictor.state_dict(), 'best_model_params.pth')
+                        best_pars = [par.clone().detach() for par in self._predictor.parameters()]
+                        # torch.save(self._predictor.state_dict(), 'best_model_params.pth')
                         # Update the best validation loss
                         predictor_multistep_best_val_loss[index] = validation_loss
                         predictor_multistep_best_epoch[index] = i
@@ -1315,7 +1326,11 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     break
 
         #load the best parameters with best validation loss (early stopping)
-        self._predictor.load_state_dict(torch.load('best_model_params.pth'))
+        for best_par, new_par in zip(
+                    best_pars, self._predictor.parameters()
+                ):
+                    new_par.data = best_par.clone()
+        # self._predictor.load_state_dict(torch.load('best_model_params.pth'))
 
         ########################### 
         #training wrapup
