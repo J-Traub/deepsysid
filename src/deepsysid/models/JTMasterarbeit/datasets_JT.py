@@ -21,8 +21,8 @@ from ..base import DynamicIdentificationModelConfig
 from ..datasets import RecurrentHybridPredictorDataset,RecurrentInitializerDataset, RecurrentPredictorDataset,FixedWindowDataset
 
 
-class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
-    def __init__(self, control_seqs, state_seqs):
+class TimeSeriesDataset(data.Dataset[Dict[str, torch.Tensor]]):
+    def __init__(self, control_seqs, state_seqs, device):
         self.control,self.next_state,self.state = self.__load_data(
             control_seqs, state_seqs
         )
@@ -31,6 +31,11 @@ class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
         self.control = np.resize(self.control,(subbatchnum,self.subbatchsize,self.control.shape[1]))
         self.next_state = np.resize(self.next_state,(subbatchnum,self.subbatchsize,self.next_state.shape[1]))
         self.state = np.resize(self.state,(subbatchnum,self.subbatchsize,self.state.shape[1]))
+
+        self.control = torch.from_numpy(self.control).float().to(device)
+        self.next_state =  torch.from_numpy(self.next_state).float().to(device)
+        self.state =  torch.from_numpy(self.state).float().to(device)
+
 
     def __len__(self):
         # compute the total number of samples by summing the lengths of all sequences
@@ -50,32 +55,34 @@ class TimeSeriesDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
             
         return np.vstack(control),np.vstack(next_state),np.vstack(state)
     
-    def __getitem__(self, idx: int) -> Dict[str, NDArray[np.float64]]:
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         return {
             'FNN_input': self.control[idx],
             'next_state': self.next_state[idx], 
             'Lin_input': self.state[idx],
             }
 
-class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
+class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, torch.Tensor]]):
     def __init__(
         self,
         control_seqs: List[NDArray[np.float64]],
         state_seqs: List[NDArray[np.float64]],
         sequence_length: int,
+        device: torch.device,
     ):
         self.sequence_length = sequence_length
         self.control_dim = control_seqs[0].shape[1]
         self.state_dim = state_seqs[0].shape[1]
         dataset = self.__load_data(control_seqs, state_seqs)
-        self.x0 = dataset['x0']
-        self.y0 = dataset['y0']
-        self.control = dataset['cont']
-        self.states = dataset['stat']
-        self.x0_control = dataset['x0_control']
-        self.x0_states = dataset['x0_states']
-        self.control_prev = dataset['cont_prev']
-        self.states_prev = dataset['stat_prev']
+
+        self.x0 = torch.from_numpy(dataset['x0']).float().to(device)
+        self.y0 = torch.from_numpy(dataset['y0']).float().to(device)
+        self.control = torch.from_numpy(dataset['cont']).float().to(device)
+        self.states = torch.from_numpy(dataset['stat']).float().to(device)
+        self.x0_control = torch.from_numpy(dataset['x0_control']).float().to(device)
+        self.x0_states = torch.from_numpy(dataset['x0_states']).float().to(device)
+        self.control_prev = torch.from_numpy(dataset['cont_prev']).float().to(device)
+        self.states_prev = torch.from_numpy(dataset['stat_prev']).float().to(device)
 
     def __load_data(
         self,
@@ -188,7 +195,7 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, NDArray[np.flo
     def __len__(self) -> int:
         return self.x0.shape[0]
 
-    def __getitem__(self, idx: int) -> Dict[str, NDArray[np.float64]]:
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         return {
             'x0': self.x0[idx],
             'y0': self.y0[idx],
