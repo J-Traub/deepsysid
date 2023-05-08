@@ -134,7 +134,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 gamma=self.gamma,
                 beta=self.beta,
                 bias=self.bias,
-            )#.to(self.device)
+            ).to(self.device)
         else:
             self._predictor =LtiRnnConvConstr(
                 nx=self.nx,
