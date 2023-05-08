@@ -22,8 +22,8 @@ from ..datasets import RecurrentHybridPredictorDataset,RecurrentInitializerDatas
 import torch.jit as jit
 from .networks_JT import InputNet, InputRNNNet, DiskretizedLinear, LtiRnnConvConstr
 
-# class Hybrid_Model(jit.ScriptModule):
-class Hybrid_Model(nn.Module):
+class Hybrid_Model(jit.ScriptModule):
+# class Hybrid_Model(nn.Module):
     def __init__(
             self, 
             predictor: LtiRnnConvConstr, 
@@ -41,7 +41,7 @@ class Hybrid_Model(nn.Module):
         self.inputRNNnet = inputRNNnet
         self.device = device
 
-    # @jit.script_method
+    @jit.script_method
     def forward_inputnet(self, FNN_input, Lin_input,_state_mean_torch,_state_std_torch):
         input_forces = self.inputnet.forward(FNN_input)
         states_next = self.diskretized_linear.forward(input_forces,Lin_input)
@@ -49,7 +49,7 @@ class Hybrid_Model(nn.Module):
         return states_next
 
 
-    # @jit.script_method
+    @jit.script_method
     def forward_predictor_onestep_alt(
         self, 
         control_prev, 
@@ -104,7 +104,7 @@ class Hybrid_Model(nn.Module):
 
         return output_normed
 
-    # @jit.script_method
+    @jit.script_method
     def forward_predictor_onestep(
         self, 
         control_prev, 
@@ -160,7 +160,7 @@ class Hybrid_Model(nn.Module):
 
         return output_normed
 
-    # @jit.script_method
+    @jit.script_method
     def forward_predictor_multistep_alt(
         self,
         control_lin,
@@ -227,7 +227,7 @@ class Hybrid_Model(nn.Module):
             
         return torch.cat(outputs, dim=1)        
 
-    # @jit.script_method
+    @jit.script_method
     def forward_predictor_multistep(
         self,
         control_lin,
