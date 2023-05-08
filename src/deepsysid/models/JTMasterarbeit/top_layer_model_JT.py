@@ -373,8 +373,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     )
 
 
-                barrier = self._predictor.get_barrier(t).to(self.device)
-
+                barrier = self._predictor.get_barrier(t)
                 batch_loss = self.loss.forward(output_normed, batch['states'])
                 total_loss += batch_loss.item()
                 (batch_loss + barrier).backward()
@@ -520,7 +519,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         _state_std_torch = _state_std_torch,
                     )
 
-                barrier = self._predictor.get_barrier(t).to(self.device)
+                barrier = self._predictor.get_barrier(t)
 
                 true_state = batch['states']
                 # test1 = outputs_tensor
@@ -894,7 +893,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         _state_std_torch= _state_std_torch
                     )
 
-                barrier = self._predictor.get_barrier(t).to(self.device)
+                barrier = self._predictor.get_barrier(t)
 
                 #loss calculation, when weights are all 1, they are equivalent 
                 if loss_weights is None:
@@ -979,7 +978,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         _state_std_torch= _state_std_torch
                     )
 
-                barrier = self._predictor.get_barrier(t).to(self.device)
+                barrier = self._predictor.get_barrier(t)
 
                 #loss calculation, when weights are all 1, they are equivalent 
                 if loss_weights is None:
@@ -1154,7 +1153,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         )
 
 
-                    barrier = self._predictor.get_barrier(t).to(self.device)
+                    barrier = self._predictor.get_barrier(t)
 
                     true_state = batch['states']
                     # test1 =outputs_tensor
@@ -1248,7 +1247,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             _state_std_torch = _state_std_torch,
                         )
 
-                    barrier = self._predictor.get_barrier(t).to(self.device)
+                    barrier = self._predictor.get_barrier(t)
 
                     true_state = states
                     # test1 =outputs_tensor
