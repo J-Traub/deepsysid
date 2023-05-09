@@ -58,7 +58,7 @@ class InputNet(nn.Module):
 #TODO LayerNorm normalises across all features 
 # so it might normalise each point in the sequence
 # which would kinda go against the inteded purpose
-class InputRNNNet(nn.Module):
+class InputRNNNet(jit.ScriptModule):
     def __init__(self, dropout: float, control_dim: int):
         super(InputRNNNet, self).__init__()
         self.fc1 = nn.Linear(control_dim, 32)  # 6 input features, 32 output features
@@ -72,6 +72,7 @@ class InputRNNNet(nn.Module):
         self.norm1 = nn.LayerNorm(32)
         self.norm2 = nn.LayerNorm(64)
 
+    @jit.script_method
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu(x)
@@ -84,7 +85,7 @@ class InputRNNNet(nn.Module):
         x = self.fc3(x)
         return x
 
-class DiskretizedLinear(nn.Module):
+class DiskretizedLinear(jit.ScriptModule):
     def __init__(
         self,
         Ad: List[List[np.float64]],
@@ -109,7 +110,8 @@ class DiskretizedLinear(nn.Module):
         self.ssv_input.requires_grad = False
         self.ssv_states = nn.Parameter(torch.tensor(ssv_states).squeeze().float())
         self.ssv_states.requires_grad = False
-
+    
+    @jit.script_method
     def forward(self, 
                 input_forces: torch.Tensor,
                 states: torch.Tensor 
@@ -134,6 +136,7 @@ class DiskretizedLinear(nn.Module):
         #dont calculate y here, rather outside since else the calculation order might be wierd
         return states_next
     
+    @jit.script_method
     def calc_output(self, 
             states: torch.Tensor,
             input_forces: Optional[torch.Tensor] = None,
@@ -307,7 +310,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
             self.D21.weight.data = torch.tensor(D21_, dtype=dtype)
         self.C2.weight.data = torch.tensor(C2_, dtype=dtype)
 
-
+    @jit.script_method
     def forward(
         self,
         x_pred: torch.Tensor,
@@ -316,8 +319,8 @@ class LtiRnnConvConstr(jit.ScriptModule):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         n_batch, n_sample, _ = x_pred.shape
 
-        Y_inv = self.Y.inverse()
-        T_inv = torch.diag(1 / torch.squeeze(self.lambdas))
+        # Y_inv = self.Y.inverse()
+        # T_inv = torch.diag(1 / torch.squeeze(self.lambdas))
         # initialize output
         y = torch.zeros((n_batch, n_sample, self.ny),device=device)
 
@@ -336,7 +339,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
 
         return y, x
 
-    # @jit.script_method
+    @jit.script_method
     def forward_alt(
         self,
         x_pred: torch.Tensor,
@@ -367,7 +370,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
 
         return y, (x, x)
     
-    # @jit.script_method
+    @jit.script_method
     def forward_alt_onestep(
         self,
         x_pred: torch.Tensor,
@@ -490,7 +493,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         M = self.get_constraints()
         barrier = -t * (-M).logdet()
 
-        _, info = torch.linalg.cholesky_ex(-M)
+        _, info = torch.linalg.cholesky_ex(-M.cpu())
 
         if info > 0:
             barrier += torch.tensor(float('inf'),device=barrier.device)
@@ -501,7 +504,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         with torch.no_grad():
             M = self.get_constraints()
 
-            _, info = torch.linalg.cholesky_ex(-M)
+            _, info = torch.linalg.cholesky_ex(-M.cpu())
 
             if info > 0:
                 b_satisfied = False

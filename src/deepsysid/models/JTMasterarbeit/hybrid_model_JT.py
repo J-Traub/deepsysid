@@ -312,7 +312,7 @@ class Hybrid_Model(jit.ScriptModule):
                 logger.warning(
                     f'Epoch {current_epochs+1}/{max_epochs}\t'
                     f'max real eigenvalue of M: '
-                    # f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
+                    f'{(torch.max(torch.real(torch.linalg.eig(M)[0]))):1f}\t'
                     f'Backtracking line search exceeded maximum iteration. \t'
                     f'Constraints satisfied? {self.predictor.check_constr()}'
                 )

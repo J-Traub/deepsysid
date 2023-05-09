@@ -557,7 +557,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         M = self.get_constraints()
         barrier = -t * (-M).logdet()
 
-        _, info = torch.linalg.cholesky_ex(-M)
+        _, info = torch.linalg.cholesky_ex(-M.cpu())
 
         if info > 0:
             barrier += torch.tensor(float('inf'))
@@ -568,7 +568,7 @@ class LtiRnnConvConstr(jit.ScriptModule):
         with torch.no_grad():
             M = self.get_constraints()
 
-            _, info = torch.linalg.cholesky_ex(-M)
+            _, info = torch.linalg.cholesky_ex(-M.cpu())
 
             if info > 0:
                 b_satisfied = False

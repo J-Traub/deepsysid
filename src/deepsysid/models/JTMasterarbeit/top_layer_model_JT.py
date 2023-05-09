@@ -339,6 +339,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             )
             total_loss = 0
             max_grad = 0
+            bls_iter = 0
+
             for batch_idx, batch in enumerate(data_loader):
                 self._predictor.zero_grad()
 
@@ -392,12 +394,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 ########################### 
                 #Constraints Checking
                 #################################
-                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                constr_hold, bls_iter_ = self._Hybrid_model.constraints_checking(
                     old_pars=old_pars,
                     current_epochs = i,
                     max_epochs=self.epochs_predictor_singlestep,
                     logger = logger
                 )
+                bls_iter += bls_iter_
                 if not constr_hold:
                     raise ValueError(
                         "Error: Model did not complete Teacher Forcing training phase. \n"
@@ -473,6 +476,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             )
             total_loss = 0
             max_grad = 0
+            bls_iter = 0
             for batch_idx, batch in enumerate(data_loader):
                 self._predictor.zero_grad()
 
@@ -540,12 +544,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 ########################### 
                 #Constraints Checking
                 #################################
-                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                constr_hold, bls_iter_ = self._Hybrid_model.constraints_checking(
                     old_pars=old_pars,
                     current_epochs = i,
                     max_epochs=self.epochs_predictor_multistep,
                     logger = logger
                 )
+                bls_iter += bls_iter_
                 if not constr_hold:
                     return dict(
                         index=np.asarray(i),
@@ -860,6 +865,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             )
             total_loss = 0
             max_grad = 0
+            bls_iter = 0
 
             #because of validation
             self._predictor.train()
@@ -927,12 +933,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 ########################### 
                 #Constraints Checking
                 #################################
-                constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                constr_hold, bls_iter_ = self._Hybrid_model.constraints_checking(
                     old_pars=old_pars,
                     current_epochs = i,
                     max_epochs=self.epochs_predictor_singlestep,
                     logger = logger
                 )
+                bls_iter += bls_iter_
 
                 if not constr_hold:
                     break
@@ -1111,6 +1118,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 )
                 total_loss = 0
                 max_grad = 0
+                bls_iter = 0
 
                 #because of validation
                 self._predictor.train()
@@ -1193,12 +1201,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     ########################### 
                     #Constraints Checking
                     #################################
-                    constr_hold, bls_iter = self._Hybrid_model.constraints_checking(
+                    constr_hold, bls_iter_ = self._Hybrid_model.constraints_checking(
                         old_pars=old_pars,
                         current_epochs = i,
                         max_epochs=self.epochs_predictor_multistep,
                         logger = logger
                     )
+                    bls_iter += bls_iter_
 
                     if not constr_hold:
                         break
