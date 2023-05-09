@@ -26,7 +26,8 @@ import torch.jit as jit
 logger = logging.getLogger(__name__)
 
 #TODO: make all of them jit
-class InputNet(nn.Module):
+class InputNet(jit.ScriptModule):
+# class InputNet(nn.Module):
     def __init__(self, dropout: float):
         super(InputNet, self).__init__()
         self.fc1 = nn.Linear(6, 32)  # 6 input features, 32 output features
@@ -38,7 +39,8 @@ class InputNet(nn.Module):
 
         self.relu = nn.ReLU()  # activation function
         self.dropout = nn.Dropout(dropout)  # dropout regularization
-
+   
+    @jit.script_method
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu(x)

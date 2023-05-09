@@ -1071,6 +1071,13 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #multi-step training
         #################################
         self._inputnet.eval()
+
+        predictor_loss_multistep: List[np.float64] = []
+        min_eigenvalue: List[np.float64] = []
+        max_eigenvalue: List[np.float64] = []
+        barrier_value: List[np.float64] = []
+        gradient_norm: List[np.float64] = []
+        backtracking_iter: List[np.float64] = []
         
         #let the sequence length rise slowley and always when
         # validation early stopping triggers or constraints are violated 
@@ -1105,12 +1112,6 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
             # time_start_pred = time.time()
             t = self.initial_decay_parameter
-            predictor_loss_multistep: List[np.float64] = []
-            min_eigenvalue: List[np.float64] = []
-            max_eigenvalue: List[np.float64] = []
-            barrier_value: List[np.float64] = []
-            gradient_norm: List[np.float64] = []
-            backtracking_iter: List[np.float64] = []
             
             for i in range(self.epochs_predictor_multistep):
                 data_loader = data.DataLoader(
@@ -1284,8 +1285,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                         validation_loss = torch.mean(
                             ((true_state - outputs_tensor) ** 2) * loss_weights
                             )
-
-                    if validation_loss < predictor_multistep_best_val_loss[index]:
+                        
+                    #the list is just to know in which iteration the best_val_loss
+                    # was updated 
+                    if validation_loss < predictor_multistep_best_val_loss.min():
                         # If it is, save the model parameters
                         best_pars = [par.clone().detach() for par in self._predictor.parameters()]
                         # torch.save(self._predictor.state_dict(), 'best_model_params.pth')

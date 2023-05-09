@@ -2083,12 +2083,19 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #################################
         self._inputnet.eval()
         
+        predictor_loss_multistep: List[np.float64] = []
+        min_eigenvalue: List[np.float64] = []
+        max_eigenvalue: List[np.float64] = []
+        barrier_value: List[np.float64] = []
+        gradient_norm: List[np.float64] = []
+        backtracking_iter: List[np.float64] = []
+        
         #let the sequence length rise slowley and always when
         # validation early stopping triggers or constraints are violated 
         #=> Due to the Validation loss beeing on a fixed sequence it is not affected
         #   by the change of the loss due to different sequence length
         #       => sequence length does not effect loss but the sumation 
-        #          over all batches without division over the number of batches does
+        #          over all batches without division over the number of batches does      
         for index, seq_len in enumerate(self.sequence_length_list):
             #break training loop if constraint is failed 
             # (will then fall back to last validation checkpoint)
@@ -2113,15 +2120,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                     self._predictor.parameters(), lr=self.learning_rate
                 )
 
-
             time_start_pred = time.time()
             t = self.initial_decay_parameter
-            predictor_loss_multistep: List[np.float64] = []
-            min_eigenvalue: List[np.float64] = []
-            max_eigenvalue: List[np.float64] = []
-            barrier_value: List[np.float64] = []
-            gradient_norm: List[np.float64] = []
-            backtracking_iter: List[np.float64] = []
             
             for i in range(self.epochs_predictor_multistep):
                 data_loader = data.DataLoader(
@@ -2404,7 +2404,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                             ((true_state - outputs_tensor) ** 2) * loss_weights
                             )
 
-                    if validation_loss < predictor_multistep_best_val_loss[index]:
+                    #the list is just to know in which iteration the best_val_loss
+                    # was updated 
+                    if validation_loss < predictor_multistep_best_val_loss.min():
                         # If it is, save the model parameters
                         torch.save(self._predictor.state_dict(), 'best_model_params.pth')
                         # Update the best validation loss
