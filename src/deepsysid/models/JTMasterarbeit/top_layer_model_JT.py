@@ -60,6 +60,8 @@ class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
     RNNinputnetbool : bool
     forward_alt_bool : bool
     sequence_length_list : List[int]
+    patience : int
+    loss_weights : Optional[List[np.float64]] = None
 
 #for some reason i called it convRNN but i meant ConstRNN
 #as in constrained RNN => i think it means convex RNN
@@ -114,6 +116,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         self.RNNinputnetbool = config.RNNinputnetbool
         self.forward_alt_bool = config.forward_alt_bool
         self.sequence_length_list = config.sequence_length_list
+        self.patience = config.patience
+        self.loss_weights = config.loss_weights
 
         #TODO:msge should probably never be used
         if config.loss == 'mse':
@@ -625,13 +629,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         control_seqs: List[NDArray[np.float64]],
         state_seqs: List[NDArray[np.float64]],
         control_seqs_vali: List[NDArray[np.float64]],
-        state_seqs_vali: List[NDArray[np.float64]],
-        patience: np.int64, #how many epochs to wait until early stopping triggers
-        loss_weights: NDArray[np.float64] = None
+        state_seqs_vali: List[NDArray[np.float64]]
     ) -> Dict[str, NDArray[np.float64]]:
         
+        loss_weights = self.loss_weights
         if loss_weights is not None:
-            loss_weights = torch.from_numpy(loss_weights).float().to(self.device)
+            loss_weights = torch.from_numpy(np.array(loss_weights)).float().to(self.device)
 
         #not that it would make a difference since all parameters 
         # have requires_grad = False but just to be sure
@@ -791,7 +794,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             #validation
             validation_loss_ = validation_loss.item()
             inputfnn_validation_losses.append([i, validation_loss_])
-            if patience < (i-inputfnn_best_epoch):
+            if self.patience < (i-inputfnn_best_epoch):
                 print("early stopping")
                 break
 
@@ -1045,7 +1048,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             validation_loss_ = validation_loss.item()
             predictor_validation_losses.append([i, validation_loss_])
 
-            if patience < (i-predictor_best_epoch):
+            if self.patience < (i-predictor_best_epoch):
                 print("early stopping")
                 break
 
@@ -1321,7 +1324,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 validation_loss_ = validation_loss.item()
                 predictor_multistep_validation_losses.append([i, validation_loss_])
 
-                if patience < (i-predictor_multistep_best_epoch[index]):
+                if self.patience < (i-predictor_multistep_best_epoch[index]):
                     print("early stopping")
                     break
 
