@@ -19,6 +19,7 @@ from ...networks.rnn import HiddenStateForwardModule
 from .. import base, utils
 from ..base import DynamicIdentificationModelConfig
 from ..datasets import RecurrentHybridPredictorDataset,RecurrentInitializerDataset, RecurrentPredictorDataset,FixedWindowDataset
+from collections import namedtuple
 
 from .networks_JT import InputNet, InputRNNNet, DiskretizedLinear, LtiRnnConvConstr
 from .datasets_JT import TimeSeriesDataset, HybridRecurrentLinearFNNInputDataset
@@ -841,13 +842,33 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         # (will then fall back to last validation checkpoint)
         constr_hold = True
 
-        #validation
-        predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
-            us_vali,
-            ys_vali,
-            sequence_length = 900, #validation sequence length should be static i think
-            device=self.device
-            )
+        #alternative validation dataset (the same as my multistep simulation)
+        x0_control_ = us_vali[:, :50, :]
+        x0_states_ = ys_vali[:, :50, :]
+        x0_ = torch.cat((x0_control_, x0_states_), axis=-1)
+        control_ = us_vali[:, 50:,:]
+        states_ = ys_vali[:, 50:,:]
+        cont_prev_ = us_vali[:, 49:-1,:]
+        stat_prev_ = ys_vali[:, 49:-1,:]
+        PredictorDatasetVali = namedtuple('PredictorDatasetVali', ['x0', 'y0', 'control', 'states', 'x0_control', 'x0_states', 'control_prev', 'states_prev'])
+        predictor_dataset_vali = PredictorDatasetVali(
+            x0 = torch.from_numpy(x0_).float().to(self.device),
+            # y0 = #would only be needed for initializer training
+            control = torch.from_numpy(control_).float().to(self.device),
+            states = torch.from_numpy(states_).float().to(self.device),
+            x0_control = torch.from_numpy(x0_control_).float().to(self.device),
+            x0_states = torch.from_numpy(x0_states_).float().to(self.device),
+            control_prev = torch.from_numpy(cont_prev_).float().to(self.device),
+            states_prev = torch.from_numpy(stat_prev_).float().to(self.device),
+        )
+
+        # #validation
+        # predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
+        #     us_vali,
+        #     ys_vali,
+        #     sequence_length = 900, #validation sequence length should be static i think
+        #     device=self.device
+        #     )
 
         predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, self.sequence_length, device=self.device)
 
@@ -1641,9 +1662,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         with torch.no_grad():
             #TODO: does it take only one? and the right one?
-            last_init_cont = controls_[:, 49:50, :].float().to(self.device)
+            last_init_cont = controls_[:, 49:50, :]
             #states_ are the not normalised states
-            last_init_state = states_[:, 49:50, :].float().to(self.device)
+            last_init_state = states_[:, 49:50, :]
             
             init_input_lin_ = self._inputnet.forward(last_init_cont)
 
