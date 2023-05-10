@@ -495,10 +495,13 @@ class LtiRnnConvConstr(jit.ScriptModule):
         M = self.get_constraints()
         barrier = -t * (-M).logdet()
 
-        _, info = torch.linalg.cholesky_ex(-M.cpu())
+        #this is unnecessary since the last step of each batch calculation
+        #is to check constraints and do backtracking until they check
+        #and get_barrier will then be calculated before the next optimizer step
+        # _, info = torch.linalg.cholesky_ex(-M.cpu())
 
-        if info > 0:
-            barrier += torch.tensor(float('inf'),device=barrier.device)
+        # if info > 0:
+        #     barrier += torch.tensor(float('inf'),device=barrier.device)
 
         return barrier
 
