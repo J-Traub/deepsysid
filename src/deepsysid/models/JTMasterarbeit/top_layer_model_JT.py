@@ -491,7 +491,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                 #we need only the last point of the x0 sequence for init of the linear
                 init_control = batch['x0_control'][:,-1:,:]
-                init_state = batch['x0_states'][:,-1:,:]
+                #inputs into the diskretized model need to be denormalised
+                init_state = utils.denormalize(batch['x0_states'][:,-1:,:], _state_mean_torch, _state_std_torch)
                 init_input = self._inputnet.forward(init_control)
                 states_next = self._diskretized_linear.forward(
                     input_forces= init_input,
@@ -1138,7 +1139,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                     #we need only the last point of the x0 sequence for init of the linear
                     init_control = batch['x0_control'][:,-1:,:]
-                    init_state = batch['x0_states'][:,-1:,:]
+                    #inputs into the diskretized model need to be denormalised
+                    init_state = utils.denormalize(batch['x0_states'][:,-1:,:], _state_mean_torch, _state_std_torch)
                     init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
                         input_forces= init_input,
@@ -1234,7 +1236,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
                     #we need only the last point of the x0 sequence for init of the linear
                     init_control = x0_control[:,-1:,:]
-                    init_state = x0_states[:,-1:,:]
+                    #inputs into the diskretized model need to be denormalised
+                    init_state = utils.denormalize(x0_states[:,-1:,:], _state_mean_torch, _state_std_torch)
                     init_input = self._inputnet.forward(init_control)
                     states_next = self._diskretized_linear.forward(
                         input_forces= init_input,
