@@ -845,7 +845,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         #alternative validation dataset (the same as my multistep simulation)
         x0_control_ = us_vali[:, :50, :]
         x0_states_ = ys_vali[:, :50, :]
-        x0_ = torch.cat((x0_control_, x0_states_), axis=-1)
+        x0_ = np.concatenate((x0_control_, x0_states_), axis=-1)
         control_ = us_vali[:, 50:,:]
         states_ = ys_vali[:, 50:,:]
         cont_prev_ = us_vali[:, 49:-1,:]
@@ -853,7 +853,7 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         PredictorDatasetVali = namedtuple('PredictorDatasetVali', ['x0', 'y0', 'control', 'states', 'x0_control', 'x0_states', 'control_prev', 'states_prev'])
         predictor_dataset_vali = PredictorDatasetVali(
             x0 = torch.from_numpy(x0_).float().to(self.device),
-            # y0 = #would only be needed for initializer training
+            y0 = torch.from_numpy(x0_states_).float().to(self.device), #probably wrong but only needed for initializer training 
             control = torch.from_numpy(control_).float().to(self.device),
             states = torch.from_numpy(states_).float().to(self.device),
             x0_control = torch.from_numpy(x0_control_).float().to(self.device),
