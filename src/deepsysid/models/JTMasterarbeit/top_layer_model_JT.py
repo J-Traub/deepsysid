@@ -842,33 +842,33 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         # (will then fall back to last validation checkpoint)
         constr_hold = True
 
-        #alternative validation dataset (the same as my multistep simulation)
-        x0_control_ = us_vali[:, :50, :]
-        x0_states_ = ys_vali[:, :50, :]
-        x0_ = np.concatenate((x0_control_, x0_states_), axis=-1)
-        control_ = us_vali[:, 50:,:]
-        states_ = ys_vali[:, 50:,:]
-        cont_prev_ = us_vali[:, 49:-1,:]
-        stat_prev_ = ys_vali[:, 49:-1,:]
-        PredictorDatasetVali = namedtuple('PredictorDatasetVali', ['x0', 'y0', 'control', 'states', 'x0_control', 'x0_states', 'control_prev', 'states_prev'])
-        predictor_dataset_vali = PredictorDatasetVali(
-            x0 = torch.from_numpy(x0_).float().to(self.device),
-            y0 = torch.from_numpy(x0_states_).float().to(self.device), #probably wrong but only needed for initializer training 
-            control = torch.from_numpy(control_).float().to(self.device),
-            states = torch.from_numpy(states_).float().to(self.device),
-            x0_control = torch.from_numpy(x0_control_).float().to(self.device),
-            x0_states = torch.from_numpy(x0_states_).float().to(self.device),
-            control_prev = torch.from_numpy(cont_prev_).float().to(self.device),
-            states_prev = torch.from_numpy(stat_prev_).float().to(self.device),
-        )
+        # #alternative validation dataset (the same as my multistep simulation)
+        # x0_control_ = us_vali[:, :50, :]
+        # x0_states_ = ys_vali[:, :50, :]
+        # x0_ = np.concatenate((x0_control_, x0_states_), axis=-1)
+        # control_ = us_vali[:, 50:,:]
+        # states_ = ys_vali[:, 50:,:]
+        # cont_prev_ = us_vali[:, 49:-1,:]
+        # stat_prev_ = ys_vali[:, 49:-1,:]
+        # PredictorDatasetVali = namedtuple('PredictorDatasetVali', ['x0', 'y0', 'control', 'states', 'x0_control', 'x0_states', 'control_prev', 'states_prev'])
+        # predictor_dataset_vali = PredictorDatasetVali(
+        #     x0 = torch.from_numpy(x0_).float().to(self.device),
+        #     y0 = torch.from_numpy(x0_states_).float().to(self.device), #probably wrong but only needed for initializer training 
+        #     control = torch.from_numpy(control_).float().to(self.device),
+        #     states = torch.from_numpy(states_).float().to(self.device),
+        #     x0_control = torch.from_numpy(x0_control_).float().to(self.device),
+        #     x0_states = torch.from_numpy(x0_states_).float().to(self.device),
+        #     control_prev = torch.from_numpy(cont_prev_).float().to(self.device),
+        #     states_prev = torch.from_numpy(stat_prev_).float().to(self.device),
+        # )
 
-        # #validation
-        # predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
-        #     us_vali,
-        #     ys_vali,
-        #     sequence_length = 900, #validation sequence length should be static i think
-        #     device=self.device
-        #     )
+        #validation
+        predictor_dataset_vali = HybridRecurrentLinearFNNInputDataset(
+            us_vali,
+            ys_vali,
+            sequence_length = 900, #validation sequence length should be static i think
+            device=self.device
+            )
 
         predictor_dataset = HybridRecurrentLinearFNNInputDataset(us, ys, self.sequence_length, device=self.device)
 
