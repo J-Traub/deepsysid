@@ -291,7 +291,88 @@ class TrajectoryNED6DOFRootMeanSquaredErrorMetric(BaseMetric):
             z[i] = euler_method(z[i - 1], zdot[i], self.sample_time)
 
         return x, y, z
+    
 
+#not pretty but works
+class FullNormalizedRootMeanSquaredErrorMetric(BaseMetric):
+    def __init__(self, config: BaseMetricConfig):
+        super().__init__(config)
+        self.state_names = config.state_names
+        self.sample_time = config.sample_time
+
+    def measure(
+        self,
+        y_true: List[NDArray[np.float64]],
+        y_pred: List[NDArray[np.float64]],
+    ) -> Tuple[NDArray[np.float64], Dict[str, NDArray[np.float64]]]:
+        if len(y_true) != len(y_pred):
+            raise ValueError(
+                'Lists y_true and y_pred and steps need to have the same length.'
+            )
+        if not all(t.shape == p.shape for t, p in zip(y_true, y_pred)):
+            raise ValueError(
+                'Shapes of pairwise elements in y_true and y_pred have to match.'
+            )
+        if not all(
+            len(t.shape) == 2 and len(p.shape) == 2 for t, p in zip(y_true, y_pred)
+        ):
+            raise ValueError('y_true and y_pred have to be 2-dimensional arrays.')
+        
+        # Calculate the squared error between predicted and true states
+        squared_error = np.square(np.array(y_pred) - np.array(y_true))
+        
+        # Calculate the mean squared error (MSE) between predicted and true states
+        mse = np.nanmean(squared_error,tuple(range(squared_error.ndim - 1)))
+        
+        # Calculate the root mean squared error (RMSE) between predicted and true states
+        rmse = np.sqrt(mse)
+        
+        # Normalize the RMSE using the standard deviation of the true values
+        std = np.nanstd(y_true, tuple(range(squared_error.ndim - 1)))
+        normalized_rmse = rmse / std       
+
+        return normalized_rmse, dict(std=std)
+
+
+class MeanFullNormalizedRootMeanSquaredErrorMetric(BaseMetric):
+    def __init__(self, config: BaseMetricConfig):
+        super().__init__(config)
+        self.state_names = config.state_names
+        self.sample_time = config.sample_time
+
+    def measure(
+        self,
+        y_true: List[NDArray[np.float64]],
+        y_pred: List[NDArray[np.float64]],
+    ) -> Tuple[NDArray[np.float64], Dict[str, NDArray[np.float64]]]:
+        if len(y_true) != len(y_pred):
+            raise ValueError(
+                'Lists y_true and y_pred and steps need to have the same length.'
+            )
+        if not all(t.shape == p.shape for t, p in zip(y_true, y_pred)):
+            raise ValueError(
+                'Shapes of pairwise elements in y_true and y_pred have to match.'
+            )
+        if not all(
+            len(t.shape) == 2 and len(p.shape) == 2 for t, p in zip(y_true, y_pred)
+        ):
+            raise ValueError('y_true and y_pred have to be 2-dimensional arrays.')
+        
+        # Calculate the squared error between predicted and true states
+        squared_error = np.square(np.array(y_pred) - np.array(y_true))
+        
+        # Calculate the mean squared error (MSE) between predicted and true states
+        mse = np.nanmean(squared_error,tuple(range(squared_error.ndim - 1)))
+        
+        # Calculate the root mean squared error (RMSE) between predicted and true states
+        rmse = np.sqrt(mse)
+        
+        # Normalize the RMSE using the standard deviation of the true values
+        std = np.nanstd(y_true, tuple(range(squared_error.ndim - 1)))
+        normalized_rmse = rmse / std
+        mean_normalized_rmse = np.mean(normalized_rmse, axis=0)       
+
+        return np.array([mean_normalized_rmse]), dict(std=std)
 
 def retrieve_metric_class(metric_class_string: str) -> Type[BaseMetric]:
     # https://stackoverflow.com/a/452981
