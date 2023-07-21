@@ -49,6 +49,9 @@ class Hybrid_Model(jit.ScriptModule):
     def forward_inputnet(self, FNN_input, Lin_input,_state_mean_torch,_state_std_torch):
         input_forces = self.inputnet.forward(FNN_input)
         states_next = self.diskretized_linear.forward(input_forces,Lin_input)
+        states_next = self.diskretized_linear.calc_output(
+                states= states_next
+            )
         if not self.normed_linear:
             states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
         return states_next
