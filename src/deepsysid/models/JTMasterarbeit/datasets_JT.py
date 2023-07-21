@@ -62,18 +62,92 @@ class TimeSeriesDataset(data.Dataset[Dict[str, torch.Tensor]]):
             'Lin_input': self.state[idx],
             }
 
+
+class HybridRecurrentLinearInitializerDataset(data.Dataset[Dict[str, NDArray[np.float64]]]):
+    def __init__(
+        self,
+        control_seqs: List[NDArray[np.float64]], #actually not a list just array
+        state_seqs: List[NDArray[np.float64]], #actually not a list just array
+        pred_next_state_seq: List[NDArray[np.float64]], #actually not a list just array
+        sequence_length: int,
+        scaling : List[float]
+    ):
+        self.sequence_length = sequence_length
+        self.control_dim = control_seqs[0].shape[1]
+        self.state_dim = state_seqs[0].shape[1]
+        self.pred_ns_dim = pred_next_state_seq[0].shape[1]
+        self.x, self.y = self.__load_data(control_seqs , state_seqs, pred_next_state_seq, scaling)
+
+    def __load_data(
+        self,
+        control_seqs: List[NDArray[np.float64]],
+        state_seqs: List[NDArray[np.float64]],
+        pred_next_state_seq: List[NDArray[np.float64]],
+        scaling: List[float],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+        x_seq = list()
+        y_seq = list()
+        for control, state, pred_next_state in zip(control_seqs, state_seqs, pred_next_state_seq):
+            n_samples = int(
+                (control.shape[0] - self.sequence_length - 1) / self.sequence_length
+            )
+
+            x = np.zeros(
+                (n_samples, self.sequence_length, self.control_dim + self.state_dim + self.pred_ns_dim),
+                dtype=np.float64,
+            )
+            y = np.zeros(
+                (n_samples, self.sequence_length, self.state_dim), dtype=np.float64
+            )
+
+            for idx in range(n_samples):
+                time = idx * self.sequence_length
+
+                #the error correction RNN gets either the current control (t) or the previous control (t-1)
+                # doesnt seem to make all to much differnece and both have their merrits but current control (t)
+                # makes things clearer. Also gets the predicted current state (t) and 
+                #the previous (one-step)error (t-1) with the previous state (t-1) and the predicted previous state (t-1)
+                #however the predicted state is inherently one step ahead(t+1) so it would have to be (t-2) and since we
+                #cant go negativ the other states have to start at (t+1)
+                x[idx, :, :] = np.hstack(
+                    (
+                        control[time + 2  : time + 2  + self.sequence_length, :]* scaling[0],
+                        pred_next_state[time + 1 : time + 1 + self.sequence_length, :]*scaling[1], 
+                        state[time + 1 : time + 1 + self.sequence_length, :] - pred_next_state[time : time  + self.sequence_length, :],
+                    )
+                )
+
+                #since we have to start with time + 1 in the x and we want to predict the next error
+                #we have to go time + 2 on state 
+                y[idx, :, :] = state[time + 2 : time + 2 + self.sequence_length, :] - pred_next_state[time +1 : time +1 + self.sequence_length, :]
+
+            x_seq.append(x)
+            y_seq.append(y)
+
+        return np.vstack(x_seq), np.vstack(y_seq)
+
+    def __len__(self) -> int:
+        return self.x.shape[0]
+
+    def __getitem__(self, idx: int) -> Dict[str, NDArray[np.float64]]:
+        return {'x': self.x[idx], 'y': self.y[idx]}
+
+
 class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, torch.Tensor]]):
     def __init__(
         self,
         control_seqs: List[NDArray[np.float64]],
         state_seqs: List[NDArray[np.float64]],
+        pred_next_state_seq: List[NDArray[np.float64]],
+        scaling : List[float], #needed for small gain
         sequence_length: int,
         device: torch.device,
     ):
         self.sequence_length = sequence_length
         self.control_dim = control_seqs[0].shape[1]
         self.state_dim = state_seqs[0].shape[1]
-        dataset = self.__load_data(control_seqs, state_seqs)
+        self.pred_ns_dim = pred_next_state_seq[0].shape[1]
+        dataset = self.__load_data(control_seqs, state_seqs, pred_next_state_seq, scaling)
 
         self.x0 = torch.from_numpy(dataset['x0']).float().to(device)
         self.y0 = torch.from_numpy(dataset['y0']).float().to(device)
@@ -88,6 +162,8 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, torch.Tensor]]
         self,
         control_seqs: List[NDArray[np.float64]],
         state_seqs: List[NDArray[np.float64]],
+        pred_next_state_seq: List[NDArray[np.float64]],
+        scaling: List[float],
     ) -> Tuple[
         NDArray[np.float64],
         NDArray[np.float64],
@@ -104,13 +180,13 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, torch.Tensor]]
         cont_prev_seq = list()
         stat_prev_seq = list()
 
-        for control, state in zip(control_seqs, state_seqs):
+        for control, state, pred_next_state in zip(control_seqs, state_seqs,pred_next_state_seq):
             n_samples = int(
                 (control.shape[0] - 2 * self.sequence_length) / self.sequence_length
             )
 
             x0 = np.zeros(
-                (n_samples, self.sequence_length, self.control_dim + self.state_dim),
+                (n_samples, self.sequence_length-2, self.control_dim + self.state_dim + self.pred_ns_dim),
                 dtype=np.float64,
             )
             y0 = np.zeros((n_samples, self.state_dim), dtype=np.float64)
@@ -136,19 +212,16 @@ class HybridRecurrentLinearFNNInputDataset(data.Dataset[Dict[str, torch.Tensor]]
                 dtype=np.float64,
             )
 
-            #TODO: sanity check check
-            x0_ = np.zeros(
-                (n_samples, self.sequence_length, self.control_dim + self.state_dim),
-                dtype=np.float64,
-            )
 
             for idx in range(n_samples):
                 time = idx * self.sequence_length
 
                 x0[idx, :, :] = np.hstack(
                     (
-                        control[time : time + self.sequence_length, :],
-                        state[time : time + self.sequence_length, :],
+                    #take care if we are working with the previous control or the current control as input
+                        control[time + 2  : time  + self.sequence_length, :]* scaling[0],
+                        pred_next_state[time + 1 : time -1 + self.sequence_length, :]*scaling[1], 
+                        state[time + 1 : time -1 + self.sequence_length, :] - pred_next_state[time : time -2 + self.sequence_length, :],
                     )
                 )
                 x0_control[idx, :, :] = control[time : time + self.sequence_length]
