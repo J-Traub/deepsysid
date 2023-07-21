@@ -63,27 +63,39 @@ class InputNet(jit.ScriptModule):
 class InputRNNNet(jit.ScriptModule):
     def __init__(self, dropout: float, control_dim: int):
         super(InputRNNNet, self).__init__()
-        self.fc1 = nn.Linear(control_dim, 32)  # 6 input features, 32 output features
-        self.fc2 = nn.Linear(32, 64)  # 32 input features, 64 output features
-        self.fc3 = nn.Linear(64, control_dim)  # 64 input features, 4 output features
+        self.fc1 = nn.Linear(control_dim, 32)  
+        self.fc2 = nn.Linear(32, control_dim)  
 
         self.relu = nn.ReLU()  # activation function
-        self.dropout = nn.Dropout(dropout)  # dropout regularization
-
-        # LayerNorm
-        self.norm1 = nn.LayerNorm(32)
-        self.norm2 = nn.LayerNorm(64)
 
     @jit.script_method
     def forward(self, x):
         x = self.fc1(x)
         x = self.relu(x)
-        # x = self.dropout(x)
-        x = self.norm1(x)  # apply layer normalization
+        x = self.fc2(x)
+        return x
+    
+class MLPInitNet(jit.ScriptModule):
+# class MLPInitNet(nn.Module):
+    def __init__(self, dropout: float, control_dim, state_dim, seq_len, hidden_dim):
+        super(MLPInitNet, self).__init__()
+        in_dim = (control_dim+state_dim+state_dim) * seq_len
+        self.fc1 = nn.Linear(in_dim, in_dim*3)  
+        torch.nn.init.zeros_(self.fc1.weight)
+        self.fc2 = nn.Linear(in_dim*3, in_dim)  
+        torch.nn.init.zeros_(self.fc2.weight)
+        self.fc3 = nn.Linear(in_dim, hidden_dim) 
+        torch.nn.init.zeros_(self.fc3.weight)
+
+        self.relu = nn.ReLU()  # activation function
+        self.dropout = nn.Dropout(dropout)  # dropout regularization
+   
+    # @jit.script_method
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
         x = self.fc2(x)
         x = self.relu(x)
-        # x = self.dropout(x)
-        x = self.norm2(x)  # apply layer normalization
         x = self.fc3(x)
         return x
 
@@ -96,9 +108,11 @@ class DiskretizedLinear(jit.ScriptModule):
         Dd: List[List[np.float64]],
         ssv_input: List[np.float64],
         ssv_states: List[np.float64],
+        no_lin : bool,
     ):
         super().__init__()
-
+        
+        self.no_lin = no_lin
 
         self.Ad = nn.Parameter(torch.tensor(Ad).squeeze().float())
         self.Ad.requires_grad = False
@@ -122,6 +136,8 @@ class DiskretizedLinear(jit.ScriptModule):
         #           with x_corr_k = x_k+e_k the residual error corrected state
         #           y_k = x_k
         #and shifts input, and output to fit with the actual system
+        if self.no_lin:
+            return torch.zeros_like(states)
 
         #shift the input to the linearized input
         delta_in = input_forces - self.ssv_input
@@ -160,42 +176,122 @@ class DiskretizedLinear(jit.ScriptModule):
         return y
     
 
+class DiskretizedLinearOpt(jit.ScriptModule):
+    def __init__(
+        self,
+        Ad: List[List[np.float64]],
+        Bd: List[List[np.float64]],
+        Cd: List[List[np.float64]],
+        Dd: List[List[np.float64]],
+        ssv_input: List[np.float64],
+        ssv_states: List[np.float64],
+    ):
+        super().__init__()
+
+        self.Ad = nn.Parameter(torch.empty(*torch.tensor(Ad).squeeze().shape).float())
+        self.Bd = nn.Parameter(torch.empty(*torch.tensor(Bd).squeeze().shape).float())
+
+        # Initialize parameters using Xavier/Glorot initialization
+        nn.init.zeros_(self.Ad)
+        nn.init.zeros_(self.Bd)
+
+
+        self.Cd = nn.Parameter(torch.tensor(Cd).squeeze().float())
+        self.Cd.requires_grad = False
+        self.Dd = nn.Parameter(torch.tensor(Dd).squeeze().float())
+        self.Dd.requires_grad = False
+        self.ssv_input = nn.Parameter(torch.tensor(ssv_input).squeeze().float())
+        self.ssv_input.requires_grad = False
+        self.ssv_states = nn.Parameter(torch.tensor(ssv_states).squeeze().float())
+        self.ssv_states.requires_grad = False
+    
+    @jit.script_method
+    def forward(self, 
+                input_forces: torch.Tensor,
+                states: torch.Tensor 
+                ) -> torch.Tensor:
+        #calculates x_(k+1) = Ad*x_k + Bd*u_k + Ad*e_k
+        #           with x_corr_k = x_k+e_k the residual error corrected state
+        #           y_k = x_k
+        #and shifts input, and output to fit with the actual system
+
+        #shift the input to the linearized input
+        delta_in = input_forces #- self.ssv_input
+        #add the correction calculated by the RNN to the state
+        # can be seen as additional input with Ad matrix as input Matrix
+        states_corr = states 
+        #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
+        delta_states_corr = states_corr #- self.ssv_states
+        #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
+        #for compatability with torch batches we transpose the equation
+        delta_states_next = torch.matmul(delta_states_corr, self.Ad.transpose(0,1)) + torch.matmul(delta_in, self.Bd.transpose(0,1)) 
+        #shift the linearized states back to the states
+        states_next = delta_states_next #+ self.ssv_states
+        #dont calculate y here, rather outside since else the calculation order might be wierd
+        return states_next
+    
+    @jit.script_method
+    def calc_output(self, 
+            states: torch.Tensor,
+            input_forces: Optional[torch.Tensor] = None,
+            ) -> torch.Tensor:
+        """Has no real function yet and just gives out the states but in case of a
+        system with direct feedtrough or where C is not Identity it is better
+        and cleaner. Represents the general Output of a linear system:
+            y=C*x+D*u.
+
+        Args:
+            states (torch.Tensor): current state of the diskretized linear model
+            input_forces (torch.Tensor, optional): control input forces. Defaults to None.
+        
+        Returns:
+            torch.Tensor: current output of the diskretized linear model
+        """
+        y = states
+
+        return y
+    
+    def smaller_gain_penalty(self,weigth):
+        return weigth * torch.sum(torch.abs(torch.linalg.eig(self.Ad)[0]))
+    
+
 class LtiRnnConvConstr(jit.ScriptModule):
     def __init__(
-        self, nx: int, nu: int, ny: int, nw: int, gamma: float, beta: float, bias: bool
+        self, nx: int, nu: int, ny: int, nw: int, gamma: float, beta: float, bias: bool, ga : float, scal_ex : float,
+        device: torch.device = torch.device("cpu"),
     ) -> None:
         super(LtiRnnConvConstr, self).__init__()
 
-        self.nx = nx  # number of states
+        self.nx = nx  # number of (hidden)states
         self.nu = nu  # number of performance (external) input
         self.nw = nw  # number of disturbance input
         self.ny = ny  # number of performance output
         self.nz = nw  # number of disturbance output, always equal to size of w
 
-        self.ga = gamma
         self.beta = beta
         self.nl = torch.tanh
 
         self.Y = torch.nn.Parameter(torch.zeros((self.nx, self.nx)))
-        # self.A_tilde = torch.nn.Linear(self.nx, self.nx, bias=False)
-        # self.B1_tilde = torch.nn.Linear(self.nu, self.nx, bias=False)
-        # self.B2_tilde = torch.nn.Linear(self.nw, self.nx, bias=False)
         self.A = torch.nn.Linear(self.nx, self.nx, bias=False)
         self.B1 = torch.nn.Linear(self.nu, self.nx, bias=False)
         self.B2 = torch.nn.Linear(self.nw, self.nx, bias=False)        
         self.C1 = torch.nn.Linear(self.nx, self.ny, bias=False)
         self.D11 = torch.nn.Linear(self.nu, self.ny, bias=False)
         self.D12 = torch.nn.Linear(self.nw, self.ny, bias=False)
-        # self.C2_tilde = torch.nn.Linear(self.nx, self.nz, bias=False)
-        # self.D21_tilde = torch.nn.Linear(self.nu, self.nz, bias=False)
         self.C2 = torch.nn.Linear(self.nx, self.nz, bias=False)
         self.D21 = torch.nn.Linear(self.nu, self.nz, bias=False)
         self.lambdas = torch.nn.Parameter(torch.zeros((self.nw, 1)))
-        # self.b_z = torch.nn.Parameter(torch.zeros((self.nz)), requires_grad=bias)
-        # self.b_y = torch.nn.Parameter(torch.zeros((self.ny)), requires_grad=bias)
 
-        # self.Y_inv =  torch.nn.Parameter(torch.zeros(self.Y.size()))
-        # self.T_inv =  torch.nn.Parameter(torch.zeros(torch.diag(1 / torch.squeeze(self.lambdas)).size()))
+        self.gamma = gamma
+        self.ga = ga
+        #scaling factor of the external input that is not part of the feeback-loop
+        self.scal_ex = scal_ex*torch.ones(self.nu - self.ny,device=device) 
+
+        scal_fed = (self.gamma) * torch.ones(self.ny,device=device) 
+        #the constant input will also be scaled with this (order is important)
+        scal_ = torch.cat((self.scal_ex, scal_fed), dim=0)
+        self.scal = torch.diag(scal_)
+
 
     def initialize_lmi(self) -> None:
         # storage function
@@ -332,11 +428,11 @@ class LtiRnnConvConstr(jit.ScriptModule):
             x = torch.zeros((n_batch, self.nx),device=device)
 
         for k in range(n_sample):
-            z = (self.C2(x) + self.D21(x_pred[:, k, :]) )#+ self.b_z) @ self.T_inv
+            z = (self.C2(x) + self.D21(x_pred[:, k, :]@self.scal) )#+ self.b_z) @ self.T_inv
             w = self.nl(z)
-            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w) #+ self.b_y
+            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]@self.scal) + self.D12(w) #+ self.b_y
             x = (
-                self.A(x) + self.B1(x_pred[:, k, :]) + self.B2(w)
+                self.A(x) + self.B1(x_pred[:, k, :]@self.scal) + self.B2(w)
             ) #@ self.Y_inv
 
         return y, x
@@ -352,7 +448,8 @@ class LtiRnnConvConstr(jit.ScriptModule):
 
         #Add constant input as alternative Bias term
         # (needs to be considered in initialisation)
-        x_pred = torch.cat((x_pred, torch.ones((n_batch, n_sample, 1), device=device)), dim=-1)
+        #because of scaling constant input has to be first
+        x_pred = torch.cat((torch.ones((n_batch, n_sample, 1), device=device), x_pred), dim=-1)
 
         # initialize output
         y = torch.zeros((n_batch, n_sample, self.ny),device=device)
@@ -363,11 +460,11 @@ class LtiRnnConvConstr(jit.ScriptModule):
             x = torch.zeros((n_batch, self.nx),device=device)
 
         for k in range(n_sample):
-            z = (self.C2(x) + self.D21(x_pred[:, k, :]) )#+ self.b_z) @ self.T_inv
+            z = (self.C2(x) + self.D21(x_pred[:, k, :]@self.scal) )#+ self.b_z) @ self.T_inv
             w = self.nl(z)
-            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]) + self.D12(w) #+ self.b_y
+            y[:, k, :] = self.C1(x) + self.D11(x_pred[:, k, :]@self.scal) + self.D12(w) #+ self.b_y
             x = (
-                self.A(x) + self.B1(x_pred[:, k, :]) + self.B2(w)
+                self.A(x) + self.B1(x_pred[:, k, :]@self.scal) + self.B2(w)
             ) #@ self.Y_inv
 
         return y, (x, x)
@@ -383,14 +480,33 @@ class LtiRnnConvConstr(jit.ScriptModule):
 
         #Add constant input as alternative Bias term
         # (needs to be considered in initialisation)
-        x_pred = torch.cat((x_pred, torch.ones((n_batch, n_sample,1), device=device)), dim=-1)
+        #because of scaling constant input has to be first
+        x_pred = torch.cat((torch.ones((n_batch, n_sample,1), device=device), x_pred), dim=-1)
 
-        z = (self.C2(hx) + self.D21(x_pred) )#+ self.b_z) @ self.T_inv
+        z = (self.C2(hx) + self.D21(x_pred@self.scal) )
         w = self.nl(z)
-        y = self.C1(hx) + self.D11(x_pred) + self.D12(w) #+ self.b_y
+        y = self.C1(hx) + self.D11(x_pred@self.scal) + self.D12(w) 
         x = (
-            self.A(hx) + self.B1(x_pred) + self.B2(w)
-        ) #@ self.Y_inv
+            self.A(hx) + self.B1(x_pred@self.scal) + self.B2(w)
+        ) 
+
+        return y, x
+    
+    @jit.script_method
+    def forward_onestep(
+        self,
+        x_pred: torch.Tensor,
+        hx: torch.Tensor,
+        device: torch.device = torch.device("cpu"),
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+
+
+        z = (self.C2(hx) + self.D21(x_pred@self.scal) )
+        w = self.nl(z)
+        y = self.C1(hx) + self.D11(x_pred@self.scal) + self.D12(w) 
+        x = (
+            self.A(hx) + self.B1(x_pred@self.scal) + self.B2(w)
+        ) 
 
         return y, x
 
