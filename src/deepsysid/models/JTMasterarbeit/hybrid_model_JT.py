@@ -31,7 +31,9 @@ class Hybrid_Model(jit.ScriptModule):
             inputnet: InputNet, 
             diskretized_linear: DiskretizedLinear, 
             inputRNNnet: InputRNNNet,
-            device: torch.device
+            device: torch.device,
+            normed_linear: bool,
+            only_lin: bool
             ):
         super(Hybrid_Model, self).__init__()
         self.predictor = predictor
@@ -40,13 +42,42 @@ class Hybrid_Model(jit.ScriptModule):
         self.diskretized_linear = diskretized_linear
         self.inputRNNnet = inputRNNnet
         self.device = device
+        self.normed_linear = normed_linear
+        self.only_lin = only_lin
 
     @jit.script_method
     def forward_inputnet(self, FNN_input, Lin_input,_state_mean_torch,_state_std_torch):
         input_forces = self.inputnet.forward(FNN_input)
         states_next = self.diskretized_linear.forward(input_forces,Lin_input)
-        states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
+        if not self.normed_linear:
+            states_next = utils.normalize(states_next, _state_mean_torch, _state_std_torch)
         return states_next
+    
+    @jit.script_method
+    def forward_inputnet_multistep(self, FNN_input, states_next,_state_mean_torch,_state_std_torch):
+        outputs =[]
+        input_lin = self.inputnet.forward(FNN_input)
+        seq_len = FNN_input.size(dim=1)
+        for seq_step in range(seq_len):
+            #seq_step:seq_step+1 preserves the original dimensionality
+            in_lin = input_lin[:,seq_step:seq_step+1,:]
+
+
+            #this takes the denormalized corrected state as input
+            states_next = self.diskretized_linear.forward(
+                input_forces=in_lin,
+                states=states_next
+                )
+            
+            output = self.diskretized_linear.calc_output(
+                states= states_next
+            )
+            output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+
+            outputs.append(output_normed)
+
+        pred_states = torch.cat(outputs, dim=1)
+        return pred_states
 
 
     @jit.script_method
@@ -58,7 +89,8 @@ class Hybrid_Model(jit.ScriptModule):
         _state_mean_RNN_in_torch,
         _state_std_RNN_in_torch,
         _state_mean_torch,
-        _state_std_torch
+        _state_std_torch,
+        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         ):
         linear_inputs_prev = self.inputnet.forward(control_prev)
         #computationally efficient but not good to read and understand
@@ -81,18 +113,24 @@ class Hybrid_Model(jit.ScriptModule):
         
         #normalize the out_lin
         out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+        if self.normed_linear:
+            out_lin_norm = lin_in_rnn
 
-        #do the rnn 
+        #the order is important because the inputs will get scaled individually inside the RNN
         rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
 
-        res_error, _ = self.predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=None)
+        res_error, _ = self.predictor.forward_alt(x_pred = rnn_input, device=self.device, hx=hx)
 
         #calculated the corrected output and barrier
         # it is impotant to note that batch['states'] are normalised states (see loss)
         corr_states = out_lin_norm+res_error
+        if self.only_lin:
+            corr_states = out_lin_norm
 
         #denormalize to go trough possible linear system output
         corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+        if self.normed_linear:
+            corr_states_denorm = corr_states
 
         #this is functionally the same as output = corr_states_denorm but is good for understanding
         #and in case there is direct feedtrough it becomes important but then also needs an extra
@@ -101,6 +139,8 @@ class Hybrid_Model(jit.ScriptModule):
             states= corr_states_denorm
         )
         output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+        if self.normed_linear:
+            output_normed = output
 
         return output_normed
 
@@ -113,8 +153,14 @@ class Hybrid_Model(jit.ScriptModule):
         _state_mean_RNN_in_torch,
         _state_std_RNN_in_torch,
         _state_mean_torch,
-        _state_std_torch
+        _state_std_torch,
+        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         ):
+        if hx is None:
+            x = None
+        else:
+            x = hx[0][1]
+
         linear_inputs_prev = self.inputnet.forward(control_prev)
         #computationally efficient but not good to read and understand
         #explaination: 
@@ -136,19 +182,25 @@ class Hybrid_Model(jit.ScriptModule):
         
         #normalize the out_lin
         out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+        if self.normed_linear:
+            out_lin_norm = lin_in_rnn
 
 
-        #do the rnn 
+        #the order is important because the inputs will get scaled individually inside the RNN
         rnn_input = torch.concat((control_in, out_lin_norm),dim=2)
  
-        res_error, _ = self.predictor.forward(x_pred = rnn_input, device=self.device, hx=None)
+        res_error, _ = self.predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
 
         #calculated the corrected output and barrier
         # it is impotant to note that batch['states'] are normalised states (see loss)
         corr_states = out_lin_norm+res_error
+        if self.only_lin:
+            corr_states = out_lin_norm
 
         #denormalize to go trough possible linear system output
         corr_states_denorm = utils.denormalize(corr_states, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+        if self.normed_linear:
+            corr_states_denorm = corr_states
 
         #this is functionally the same as output = corr_states_denorm but is good for understanding
         #and in case there is direct feedtrough it becomes important but then also needs an extra
@@ -157,6 +209,8 @@ class Hybrid_Model(jit.ScriptModule):
             states= corr_states_denorm
         )
         output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+        if self.normed_linear:
+            output_normed = output
 
         return output_normed
 
@@ -171,9 +225,13 @@ class Hybrid_Model(jit.ScriptModule):
         _state_std_RNN_in_torch,
         _state_mean_torch,
         _state_std_torch,
+        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ):
         input_lin = self.inputnet.forward(control_lin)
-        x = torch.zeros((control_.shape[0], 1, nx),device=self.device)
+        if hx is None:
+            x = torch.zeros((control_.shape[0], 1, nx),device=self.device)
+        else:
+            x = hx[0][1].unsqueeze(1)
         
         outputs =[]
         #get the sequence dimension, sanity check: is sequence length?
@@ -200,16 +258,23 @@ class Hybrid_Model(jit.ScriptModule):
 
             #normalize the out_lin
             out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            if self.normed_linear:
+                out_lin_norm = lin_in_rnn
 
+            #the order is important because the inputs will get scaled individually inside the RNN
             rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
 
             res_error, x = self.predictor.forward_alt_onestep(x_pred = rnn_input, device=self.device, hx=x)
 
             corr_state = out_lin_norm+res_error
+            if self.only_lin:
+                corr_state = out_lin_norm
 
             #denormalize the corrected state and use it as new state for the linear
             corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
-            
+            if self.normed_linear:
+                corr_state_denorm = corr_state
+
             #this takes the denormalized corrected state as input
             states_next = self.diskretized_linear.forward(
                 input_forces=in_lin,
@@ -223,6 +288,8 @@ class Hybrid_Model(jit.ScriptModule):
                 states= corr_state_denorm
             )
             output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+            if self.normed_linear:
+                output_normed = output
             outputs.append(output_normed)
             
         return torch.cat(outputs, dim=1)        
@@ -238,9 +305,13 @@ class Hybrid_Model(jit.ScriptModule):
         _state_std_RNN_in_torch,
         _state_mean_torch,
         _state_std_torch,
+        hx: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ):
         input_lin = self.inputnet.forward(control_lin)
-        x = torch.zeros((control_.shape[0], 1, nx),device=self.device)
+        if hx is None:
+            x = None
+        else:
+            x = hx[0][1]
         
         outputs =[]
         #get the sequence dimension, sanity check: is sequence length?
@@ -255,15 +326,22 @@ class Hybrid_Model(jit.ScriptModule):
 
             #normalize the out_lin
             out_lin_norm = utils.normalize(lin_in_rnn, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            if self.normed_linear:
+                out_lin_norm = lin_in_rnn
 
+            #the order is important because the inputs will get scaled individually inside the RNN
             rnn_input = torch.concat([control_in, out_lin_norm],dim=2)
 
             res_error, x = self.predictor.forward(x_pred = rnn_input, device=self.device, hx=x)
 
             corr_state = out_lin_norm+res_error
+            if self.only_lin:
+                corr_state = out_lin_norm
 
             #denormalize the corrected state and use it as new state for the linear
             corr_state_denorm = utils.denormalize(corr_state, _state_mean_RNN_in_torch, _state_std_RNN_in_torch)
+            if self.normed_linear:
+                corr_state_denorm = corr_state
             
             #this takes the denormalized corrected state as input
             states_next = self.diskretized_linear.forward(
@@ -278,6 +356,8 @@ class Hybrid_Model(jit.ScriptModule):
                 states= corr_state_denorm
             )
             output_normed = utils.normalize(output, _state_mean_torch, _state_std_torch)
+            if self.normed_linear:
+                output_normed = output
             outputs.append(output_normed)
             
         return torch.cat(outputs, dim=1)
@@ -332,6 +412,10 @@ class Hybrid_Model(jit.ScriptModule):
             )
         ]
         max_grad += max(grads_norm)
+
+        torch.nn.utils.clip_grad_norm_(
+            self.predictor.parameters(), 100
+        )
 
         # save old parameter set
         old_pars = [
