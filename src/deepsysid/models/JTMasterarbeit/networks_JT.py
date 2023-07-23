@@ -109,10 +109,12 @@ class DiskretizedLinear(jit.ScriptModule):
         ssv_input: List[np.float64],
         ssv_states: List[np.float64],
         no_lin : bool,
+        no_bias: bool,
     ):
         super().__init__()
         
         self.no_lin = no_lin
+        self.no_bias = no_bias
 
         self.Ad = nn.Parameter(torch.tensor(Ad).squeeze().float())
         self.Ad.requires_grad = False
@@ -141,16 +143,21 @@ class DiskretizedLinear(jit.ScriptModule):
 
         #shift the input to the linearized input
         delta_in = input_forces - self.ssv_input
-        #add the correction calculated by the RNN to the state
-        # can be seen as additional input with Ad matrix as input Matrix
+        if self.no_bias:
+            delta_in = input_forces
+        # the correction is calculated outside, this is just for clarification
         states_corr = states 
         #also shift the states since the inital state needs to be shifted or if i want to do one step predictions
         delta_states_corr = states_corr - self.ssv_states
+        if self.no_bias:
+            delta_states_corr = states_corr
         #x_(k+1) = Ad*(x_k+e_k) + Bd*u_k
         #for compatability with torch batches we transpose the equation
         delta_states_next = torch.matmul(delta_states_corr, self.Ad.transpose(0,1)) + torch.matmul(delta_in, self.Bd.transpose(0,1)) 
         #shift the linearized states back to the states
         states_next = delta_states_next + self.ssv_states
+        if self.no_bias:
+            states_next = delta_states_next
         #dont calculate y here, rather outside since else the calculation order might be wierd
         return states_next
     

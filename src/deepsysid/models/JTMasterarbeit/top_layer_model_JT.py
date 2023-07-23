@@ -73,7 +73,9 @@ class HybridLinearConvRNNConfig(DynamicIdentificationModelConfig):
     no_lin : bool
     learing_rate_decay: float
     learning_rate_multistep: float
-    only_lin : float
+    only_lin : bool
+    no_bias : bool
+    bibo: str
 
 #for some reason i called it convRNN but i meant ConstRNN
 #as in constrained RNN => i think it means convex RNN
@@ -137,6 +139,12 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         self.learing_rate_decay = config.learing_rate_decay
         self.learning_rate_multistep = config.learning_rate_multistep
         self.only_lin = config.only_lin
+        self.no_bias = config.no_bias
+        self.bibo = config.bibo
+
+        self.ssv_states_np = np.asarray(self.ssv_states)
+        self.ssv_states_torch = torch.tensor(self.ssv_states).float().to(self.device)
+
 
         #TODO:msge should probably never be used
         if config.loss == 'mse':
@@ -206,7 +214,8 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
             Dd = self.Dd,
             ssv_input= self.ssv_input,
             ssv_states= self.ssv_states,
-            no_lin=self.no_lin
+            no_lin=self.no_lin,
+            no_bias = self.no_bias
         ).to(self.device)         
 
 
@@ -262,10 +271,18 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         self._control_mean, self._control_std = utils.mean_stddev(control_seqs)
         self._state_mean, self._state_std = utils.mean_stddev(state_seqs)
+
+        if self.no_bias:
+            _state_mean_ = self.ssv_states_np
+            self._state_mean = np.zeros_like(self.ssv_states_np)
+
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
         us = utils.normalize(control_seqs, self._control_mean, self._control_std)
         ys = utils.normalize(state_seqs, self._state_mean, self._state_std)
+
+        if self.no_bias:
+            ys = utils.normalize(state_seqs, _state_mean_, self._state_std)
 
         ###########################
         #InputFNN training
@@ -368,11 +385,18 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         full_states = torch.from_numpy(np.asarray(state_seqs)).float().to(self.device)
         if self.normed_linear:
             full_states = torch.from_numpy(ys).float().to(self.device)
+        if self.no_bias:
+            full_states = full_states - self.ssv_states_torch
+
 
         full_forces = self._inputnet.forward(full_control_in)
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
+
+        if self.no_bias:
+            self._state_mean_RNN_in = np.zeros_like(self._state_mean_RNN_in)
+            
         _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
         _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
     
@@ -768,14 +792,27 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         self._control_mean, self._control_std = utils.mean_stddev(control_seqs)
         self._state_mean, self._state_std = utils.mean_stddev(state_seqs)
+
+        if self.no_bias:
+            _state_mean_ = self.ssv_states_np
+            self._state_mean = np.zeros_like(self._state_mean)
+
+
+
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
         _state_std_torch = torch.from_numpy(self._state_std).float().to(self.device)
         us = utils.normalize(control_seqs, self._control_mean, self._control_std)
         ys = utils.normalize(state_seqs, self._state_mean, self._state_std)
 
+        if self.no_bias:
+            ys = utils.normalize(state_seqs, _state_mean_, self._state_std)
+
         #validation
         us_vali = utils.normalize(control_seqs_vali, self._control_mean, self._control_std)
         ys_vali = utils.normalize(state_seqs_vali, self._state_mean, self._state_std)
+        if self.no_bias:
+            ys_vali = utils.normalize(state_seqs_vali, _state_mean_, self._state_std)
+
         inputfnn_best_val_loss = torch.tensor(float('inf'), device=self.device)
         inputfnn_best_epoch = 0
         inputfnn_validation_losses = []
@@ -1037,10 +1074,17 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         if self.normed_linear:
             full_states = torch.from_numpy(ys).float().to(self.device)
 
+        if self.no_bias:
+            full_states = full_states - self.ssv_states_torch
+
         full_forces = self._inputnet.forward(full_control_in)
         full_states_next = self._diskretized_linear.forward(full_forces,full_states)
         fsn_ = full_states_next.cpu().detach().numpy().astype(np.float64)
         self._state_mean_RNN_in, self._state_std_RNN_in = utils.mean_stddev(fsn_)
+        
+        if self.no_bias:
+            self._state_mean_RNN_in = np.zeros_like(self._state_mean_RNN_in)
+
         _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
         _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
         
@@ -1818,6 +1862,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         init_state = utils.normalize(initial_state, self.state_mean, self.state_std)
         control = utils.normalize(control, self.control_mean, self.control_std)
 
+        if self.no_bias:
+            init_state = utils.normalize(initial_state, self.ssv_states_np, self.state_std)
+
 
         control = torch.from_numpy(control).float().to(self.device)
         #put it in batch,sequence,state format
@@ -1978,6 +2025,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 )
 
             outputs_tensor_denorm = utils.denormalize(outputs_tensor, _state_mean_torch, _state_std_torch)
+ 
+            if self.no_bias:
+               outputs_tensor_denorm = utils.denormalize(outputs_tensor, self.ssv_states_torch, _state_std_torch)
+
 
             y_np: NDArray[np.float64] = (
                 outputs_tensor_denorm.cpu().detach().squeeze().numpy().astype(np.float64)
@@ -2015,6 +2066,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
+        if self.no_bias:
+            states_normed_ = utils.normalize(states, self.ssv_states_np, self._state_std)
+
         _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
         _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
@@ -2022,6 +2076,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         controls_ = torch.from_numpy(controls_).float().to(self.device)
         states_ = torch.from_numpy(states).float().to(self.device)
+        if self.no_bias:
+            states_ = states_ - self.ssv_states_torch
+
         forces_ = torch.from_numpy(forces).float().to(self.device)
         states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
 
@@ -2109,6 +2166,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
             output_denormed = utils.denormalize(output_normed, _state_mean_torch, _state_std_torch)
 
+            if self.no_bias:
+               output_denormed = utils.denormalize(output_normed, self.ssv_states_torch, _state_std_torch)
+
         #fill the start that is used for initialisation with nans
         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
         filler_nans_cont = torch.full(filler_forces_.shape, float('nan')).to(self.device)
@@ -2149,6 +2209,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
         controls_ = utils.normalize(controls, self._control_mean, self._control_std)
         states_normed_ = utils.normalize(states, self._state_mean, self._state_std)
 
+        if self.no_bias:
+            states_normed_ = utils.normalize(states, self.ssv_states_np, self._state_std)
+
         _state_mean_RNN_in_torch = torch.from_numpy(self._state_mean_RNN_in).float().to(self.device)
         _state_std_RNN_in_torch = torch.from_numpy(self._state_std_RNN_in).float().to(self.device)
         _state_mean_torch = torch.from_numpy(self._state_mean).float().to(self.device)
@@ -2156,6 +2219,10 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
 
         controls_ = torch.from_numpy(controls_).float().to(self.device)
         states_ = torch.from_numpy(states).float().to(self.device)
+
+        if self.no_bias:
+            states_ = states_ - self.ssv_states_torch
+
         states_normed_ = torch.from_numpy(states_normed_).float().to(self.device)
 
         x0_control = controls_[:, :50, :]
@@ -2253,6 +2320,9 @@ class HybridLinearConvRNN(base.NormalizedControlStateModel):
                 )
 
             outputs_tensor_denorm = utils.denormalize(outputs_tensor, _state_mean_torch, _state_std_torch)
+
+            if self.no_bias:
+               outputs_tensor_denorm = utils.denormalize(outputs_tensor, self.ssv_states_torch, _state_std_torch)
 
         #fill the start that is used for initialisation with nans
         filler_nans_states = torch.full(x0_states_normed_.shape, float('nan')).to(self.device)
